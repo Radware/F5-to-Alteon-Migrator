@@ -1,0 +1,374 @@
+
+System Information at 06:48:08 Thu Jul  2, 2026
+Time zone: No timezone configured (GMT offset -08:00)
+
+
+Memory profile is Default
+
+Application Switch VA Perform Hypervisor:: VMW_VSPHERE
+
+Switch is up 0 days, 1 hour, 21 minutes and 54 seconds.
+Last boot: 05:26:14 Thu Jul  2, 2026 (unknown reason)
+Last apply: 
+Last save: 
+
+Management MAC Address     :    00:50:56:8e:10:97
+Port 1 MAC Address         :    00:50:56:8e:d4:40
+Port 2 MAC Address         :    00:50:56:8e:58:10
+License Key                :    5b:38:cb:50:21:67
+Management IP Address      :    10.210.240.137
+
+Software Version 34.5.7.0 (FLASH image1), active configuration.
+HA State:    NONE
+Cluster ID:  NONE
+Mode of operation: by Name
+
+------------------------------------------------------------------
+Note: There are configuration changes pending.  Use "diff"
+      to see them, "apply" to make them operational if
+      desired, and "save" to make them permanent.
+------------------------------------------------------------------
+Confirm seeing above note [y]: 
+>>> /c/slb/real web01
+/c/slb/real web01
+Please enter y to perform the action: 
+>>>     ena
+    ena
+Please enter y to perform the action: 
+>>>     rip 10.10.20.11
+    rip 10.10.20.11
+Please enter y to perform the action: 
+>>>     name web01
+    name web01
+Please enter y to perform the action: 
+>>> /c/slb/real web02
+/c/slb/real web02
+Please enter y to perform the action: 
+>>>     ena
+    ena
+Please enter y to perform the action: 
+>>>     rip 10.10.20.12
+    rip 10.10.20.12
+Please enter y to perform the action: 
+>>>     name web02
+    name web02
+Please enter y to perform the action: 
+>>> /c/slb/real app01
+/c/slb/real app01
+Please enter y to perform the action: 
+>>>     ena
+    ena
+Please enter y to perform the action: 
+>>>     rip 10.10.30.21
+    rip 10.10.30.21
+Please enter y to perform the action: 
+>>>     name app01
+    name app01
+Please enter y to perform the action: 
+>>>     shut psession
+    shut psession
+Please enter y to perform the action: 
+>>> /c/slb/group web_pool
+/c/slb/group web_pool
+Please enter y to perform the action: 
+>>>     ipver v4
+    ipver v4
+Please enter y to perform the action: 
+>>>     health http_basic
+    health http_basic
+Please enter y to perform the action: 
+>>>     metric leastconns
+    metric leastconns
+Please enter y to perform the action: 
+>>>     add web01
+    add web01
+Please enter y to perform the action: 
+>>>     add web02
+    add web02
+Please enter y to perform the action: 
+>>> /c/slb/group app_pool
+/c/slb/group app_pool
+Please enter y to perform the action: 
+>>>     ipver v4
+    ipver v4
+Please enter y to perform the action: 
+>>>     health tcp_8080
+    health tcp_8080
+Please enter y to perform the action: 
+>>>     metric roundrobin
+    metric roundrobin
+Please enter y to perform the action: 
+>>>     add app01
+    add app01
+Please enter y to perform the action: 
+>>> /c/slb/advhc/health http_basic HTTP
+/c/slb/advhc/health http_basic HTTP
+Please enter y to perform the action: 
+>>>     name "http_basic"
+    name "http_basic"
+Please enter y to perform the action: 
+>>>     inter 5
+    inter 5
+Please enter y to perform the action: 
+>>>     retry 3
+    retry 3
+Please enter y to perform the action: 
+>>>     timeout 5
+    timeout 5
+Please enter y to perform the action: 
+>>>     http
+    http
+Please enter y to perform the action: 
+>>>         response 200 none
+        response 200 none
+Please enter y to perform the action: 
+>>>         method GET
+        method GET
+Please enter y to perform the action: 
+>>>         path "/health"
+        path "/health"
+Please enter y to perform the action: 
+>>>         host "example.com"
+        host "example.com"
+Please enter y to perform the action: 
+>>> /c/slb/advhc/health tcp_8080 TCP
+/c/slb/advhc/health tcp_8080 TCP
+Please enter y to perform the action: 
+>>>     name "tcp_8080"
+    name "tcp_8080"
+Please enter y to perform the action: 
+>>>     dport 8080
+    dport 8080
+Please enter y to perform the action: 
+>>>     inter 5
+    inter 5
+Please enter y to perform the action: 
+>>>     retry 3
+    retry 3
+Please enter y to perform the action: 
+>>>     timeout 5
+    timeout 5
+Please enter y to perform the action: 
+>>> /c/slb/virt vs_web_http
+/c/slb/virt vs_web_http
+Please enter y to perform the action: 
+>>>     ena
+    ena
+Please enter y to perform the action: 
+>>>     ipver v4
+    ipver v4
+Please enter y to perform the action: 
+>>>     vip 10.10.10.100
+    vip 10.10.10.100
+Please enter y to perform the action: 
+>>> /c/slb/virt vs_web_http/service 80 http
+/c/slb/virt vs_web_http/service 80 http
+Please enter y to perform the action: 
+>>>     group web_pool
+    group web_pool
+Please enter y to perform the action: 
+>>>     rport 80
+    rport 80
+Please enter y to perform the action: 
+>>>     pbind clientip
+    pbind clientip
+Please enter y to perform the action: 
+>>>     ptmout 30
+    ptmout 30
+Please enter y to perform the action: 
+>>> /c/slb/virt vs_web_http/service 80 http/http/xforward ena
+/c/slb/virt vs_web_http/service 80 http/http/xforward ena
+Please enter y to perform the action: 
+>>> /c/slb/virt vs_app
+/c/slb/virt vs_app
+Please enter y to perform the action: 
+>>>     ena
+    ena
+Please enter y to perform the action: 
+>>>     ipver v4
+    ipver v4
+Please enter y to perform the action: 
+>>>     vip 10.10.10.101
+    vip 10.10.10.101
+Please enter y to perform the action: 
+>>> /c/slb/virt vs_app/service 8080 basic-slb
+/c/slb/virt vs_app/service 8080 basic-slb
+Please enter y to perform the action: 
+>>>     group app_pool
+    group app_pool
+Please enter y to perform the action: 
+>>>     rport 8080
+    rport 8080
+Please enter y to perform the action: 
+>>> /c/l2/vlan 10
+/c/l2/vlan 10
+Please enter y to perform the action: 
+>>>     name external
+    name external
+Please enter y to perform the action: 
+>>>     add 1
+    add 1
+Please enter y to perform the action: 
+>>> /c/l2/vlan 20
+/c/l2/vlan 20
+Please enter y to perform the action: 
+>>>     name internal
+    name internal
+Please enter y to perform the action: 
+>>>     add 2
+    add 2
+Please enter y to perform the action: 
+>>> /c/l3/if 1
+/c/l3/if 1
+Please enter y to perform the action: 
+>>>     ena
+    ena
+Please enter y to perform the action: 
+>>>     ipver v4
+    ipver v4
+Please enter y to perform the action: 
+>>>     addr 10.10.10.5
+    addr 10.10.10.5
+Please enter y to perform the action: 
+>>>     mask 255.255.255.0
+    mask 255.255.255.0
+Please enter y to perform the action: 
+>>>     vlan 10
+    vlan 10
+Please enter y to perform the action: 
+>>>     descr self_ext_local
+    descr self_ext_local
+Please enter y to perform the action: 
+>>> /c/l3/if 2
+/c/l3/if 2
+Please enter y to perform the action: 
+>>>     ena
+    ena
+Please enter y to perform the action: 
+>>>     ipver v4
+    ipver v4
+Please enter y to perform the action: 
+>>>     addr 10.10.20.5
+    addr 10.10.20.5
+Please enter y to perform the action: 
+>>>     mask 255.255.255.0
+    mask 255.255.255.0
+Please enter y to perform the action: 
+>>>     vlan 20
+    vlan 20
+Please enter y to perform the action: 
+>>>     descr self_int_local
+    descr self_int_local
+Please enter y to perform the action: 
+>>> /c/l3/ha/floatip 1
+/c/l3/ha/floatip 1
+Please enter y to perform the action: 
+>>>     ena
+    ena
+Please enter y to perform the action: 
+>>>     ipver v4
+    ipver v4
+Please enter y to perform the action: 
+>>>     addr 10.10.10.4
+    addr 10.10.10.4
+Please enter y to perform the action: 
+>>>     if 1
+    if 1
+Please enter y to perform the action: 
+>>> /c/l3/ha/floatip 2
+/c/l3/ha/floatip 2
+Please enter y to perform the action: 
+>>>     ena
+    ena
+Please enter y to perform the action: 
+>>>     ipver v4
+    ipver v4
+Please enter y to perform the action: 
+>>>     addr 10.10.20.4
+    addr 10.10.20.4
+Please enter y to perform the action: 
+>>>     if 2
+    if 2
+Please enter y to perform the action: 
+>>> /c/sys
+/c/sys
+Please enter y to perform the action: 
+>>>     hprompt ena
+    hprompt ena
+Please enter y to perform the action: 
+>>> /c/sys/mmgmt
+/c/sys/mmgmt
+Please enter y to perform the action: 
+>>>     addr 192.168.1.50
+    addr 192.168.1.50
+Please enter y to perform the action: 
+>>>     mask 255.255.255.0
+    mask 255.255.255.0
+Please enter y to perform the action: 
+>>>     gw 192.168.1.1
+    gw 192.168.1.1
+Please enter y to perform the action: 
+>>> /c/sys/ntp
+/c/sys/ntp
+Please enter y to perform the action: 
+>>>     prisrv 10.0.0.10
+    prisrv 10.0.0.10
+Please enter y to perform the action: 
+>>>     secsrv 10.0.0.11
+    secsrv 10.0.0.11
+Please enter y to perform the action: 
+>>>     tzone -04:00
+    tzone -04:00
+Please enter y to perform the action: 
+>>> /c/sys/syslog
+/c/sys/syslog
+Please enter y to perform the action: 
+>>>     hst1 10.0.0.20 7 7 all 514
+    hst1 10.0.0.20 7 7 all 514
+Please enter y to perform the action: 
+>>> /c/sys/ssnmp
+/c/sys/ssnmp
+Please enter y to perform the action: 
+>>>     rcomm public
+    rcomm public
+Please enter y to perform the action: 
+>>> /c/l3/route/ip4/add 10.10.30.0 255.255.255.0 10.10.20.1
+/c/l3/route/ip4/add 10.10.30.0 255.255.255.0 10.10.20.1
+Please enter y to perform the action: 
+>>> /c/l3/gw 1
+/c/l3/gw 1
+Please enter y to perform the action: 
+>>>     addr 10.10.10.1
+    addr 10.10.10.1
+Please enter y to perform the action: 
+>>>     ena  
+    ena  
+Please enter y to perform the action: 
+>>> diff
+diff
+Please enter y to perform the action: 
+>>> revert
+revert
+Please enter y to perform the action: 
+>>> y
+y
+------------------------------------------------------------------
+[Main Menu]
+     info     - Information Menu
+     stats    - Statistics Menu
+     cfg      - Configuration Menu
+     oper     - Operations Command Menu
+     boot     - Boot Options Menu
+     maint    - Maintenance Menu
+     apropos  - Look for cli commands pattern  [global command]
+     diff     - Show pending config changes  [global command]
+     apply    - Apply pending config changes [global command]
+     save     - Save updated config to FLASH [global command]
+     revert   - Revert pending or applied changes [global command]
+     exit     - Exit  [global command, always available]
+
+>> Main# 
+>>> exit
+exit
+WARNING: There are unapplied configuration changes.
+Confirm operation without applying changes (leave them pending) [y/n]: 

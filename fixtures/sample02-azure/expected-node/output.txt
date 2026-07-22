@@ -1,0 +1,72 @@
+
+/c/slb/real web1
+    ena
+    rip 10.42.1.11
+    name "azure backend 1"
+    weight 2
+
+/c/slb/real web2
+    ena
+    rip 10.42.1.12
+    maxcon 500 physical
+
+/c/slb/group pool_api
+    ipver v4
+    health tcp
+    metric roundrobin
+    add web1
+    add web2
+
+/c/slb/group pool_web
+    ipver v4
+    health mon_web
+    metric roundrobin
+    add web1
+    add web2
+
+/c/slb/advhc/health mon_web HTTP
+    name "mon_web"
+    inter 5
+    retry 3
+    timeout 5
+    http
+        response 200 inc "OK"
+        method GET
+        path "/health"
+        host "lab.local"
+        header 
+Connection:Close\r\n
+...
+/c/slb/virt vs_api
+    ena
+    ipver v4
+    vip 10.42.1.100
+/c/slb/virt vs_api/service 8081 http
+    group pool_api
+    rport 8080
+/c/slb/virt vs_web
+    ena
+    ipver v4
+    vip 10.42.1.100
+/c/slb/virt vs_web/service 80 http
+    group pool_web
+    rport 8080
+    pbind cookie insert "RDWRLAB"
+/c/slb/virt vs_web_tls
+    ena
+    ipver v4
+    vip 10.42.1.100
+/c/slb/virt vs_web_tls/service 443 https
+    group pool_web
+    rport 8080
+    pbind cookie insert "RDWRLAB"
+/c/slb/ssl/sslpol vs_web_tls/fessl e/convert d/backend/ssl d
+/c/slb/virt vs_web_tls/service 443 https/ssl/sslpol vs_web_tls
+/c/sys
+    hprompt ena
+/c/sys/mmgmt
+    dhcp ena
+/c/sys/ntp
+/c/sys/syslog
+/c/sys/ssnmp
+    rcomm public

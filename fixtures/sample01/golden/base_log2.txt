@@ -1,0 +1,42 @@
+
+#####################################################################
+# Commands unsupported by script and MAY not be supported by Alteon #
+# Syntax :                                                          #
+# Object type                                                       #
+# Object name - as appears in F5 Config                             #
+# Issue/unparsable line in f5 config                                #
+#####################################################################
+
+###
+ Object type: L3 Interface 
+ Object name: self_ext_local 
+ Line: allow-service default
+
+
+###
+ Object type: L3 Interface 
+ Object name: self_ext_float 
+ Line: allow-service default
+
+
+###
+ Object type: L3 Interface 
+ Object name: self_int_local 
+ Line: allow-service default
+
+
+###
+ Object type: L3 Interface 
+ Object name: self_int_float 
+ Line: allow-service default
+
+
+###
+Object type: SNMP Config 
+ Object name: comm-public 
+ Line :source default
+
+###
+Object type: SNMP Config 
+ Object name: comm-public 
+ Line :source default

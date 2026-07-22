@@ -1,0 +1,99 @@
+
+/c/slb/real nc_srv1
+    ena
+    rip 192.0.2.11
+    weight 5
+
+/c/slb/real nc_srv2
+    dis
+    rip 192.0.2.12
+    health nc_http_mon
+
+/c/slb/real nc_srv3
+    dis
+    rip 192.0.2.13
+    maxcon 1000 physical
+
+/c/slb/real nc_srv4
+    ena
+    rip 192.0.2.14
+    health nc_srv4_logexp
+
+/c/slb/group nc_pool_web
+    ipver v4
+    health icmp
+    metric roundrobin
+    add nc_srv1
+    add nc_srv2
+
+/c/slb/group nc_pool_app
+    ipver v4
+    health nc_pool_app_logexp
+    metric roundrobin
+    add nc_srv3
+    add nc_srv4
+
+/c/slb/group nc_pool_head
+    ipver v4
+    health https_443
+    metric roundrobin
+    add nc_srv1
+
+/c/slb/advhc/health nc_http_mon HTTP
+    name "nc_http_mon"
+    inter 5
+    retry 3
+    timeout 5
+    http
+        response 200 none
+        method GET
+        path "/health"
+        host "nc.example.com"
+        header 
+Connection:Close\r\n
+...
+
+/c/slb/advhc/health nc_srv4_logexp LOGEXP
+    name "nc_srv4_logexp"
+    logexp (icmp)|(tcp)
+
+/c/slb/advhc/health nc_pool_app_logexp LOGEXP
+    name "nc_pool_app_logexp"
+    logexp (nc_http_mon)|(tcp)
+
+/c/slb/advhc/health https_443 HTTP
+    name "https_443"
+    dport 443
+    ssl ena
+    inter 5
+    retry 3
+    timeout 5
+/c/slb/virt nc_vs_web
+    ena
+    ipver v4
+    vip 198.51.100.10
+/c/slb/virt nc_vs_web/service 80 http
+    group nc_pool_web
+    rport 80
+/c/slb/virt nc_vs_app
+    ena
+    ipver v4
+    vip 198.51.100.11
+/c/slb/virt nc_vs_app/service 8080 basic-slb
+    group nc_pool_app
+    rport 8080
+/c/slb/virt nc_vs_head
+    ena
+    ipver v4
+    vip 198.51.100.12
+/c/slb/virt nc_vs_head/service 443 ssl
+    group nc_pool_head
+    rport 443
+/c/slb/ssl/sslpol nc_vs_head/fessl d/convert d/backend/ssl e
+/c/slb/virt nc_vs_head/service 443 ssl/ssl/sslpol nc_vs_head
+/c/sys
+    hprompt ena
+/c/sys/mmgmt
+/c/sys/ntp
+/c/sys/syslog
+/c/sys/ssnmp

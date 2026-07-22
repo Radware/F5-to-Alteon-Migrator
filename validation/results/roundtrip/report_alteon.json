@@ -1,0 +1,40 @@
+{
+  "label": "alteon",
+  "vip": "10.210.240.210",
+  "https": false,
+  "when": "2026-07-08T15:07:05Z",
+  "distribution": {
+    "requests": 60,
+    "errors": 0,
+    "counts": {
+      "web1": 40,
+      "web2": 20
+    }
+  },
+  "persistence": {
+    "firstBackend": "web1",
+    "cookie": "RDWRLAB",
+    "stuck": 20,
+    "moved": 0,
+    "errors": 0,
+    "pass": true
+  },
+  "health": {
+    "victim": "web1",
+    "before": {
+      "web1": 20,
+      "web2": 10
+    },
+    "during": {
+      "web2": 30
+    },
+    "after": {
+      "web1": 20,
+      "web2": 10
+    },
+    "duringErrors": 0,
+    "ejected": true,
+    "restored": true,
+    "pass": true
+  }
+}

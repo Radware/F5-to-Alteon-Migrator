@@ -1,0 +1,116 @@
+
+/c/slb/real web01
+    ena
+    rip 10.10.20.11
+    name web01
+
+/c/slb/real web02
+    ena
+    rip 10.10.20.12
+    name web02
+
+/c/slb/real app01
+    ena
+    rip 10.10.30.21
+    name app01
+    shut psession
+
+/c/slb/group web_pool
+    ipver v4
+    health http_basic
+    metric leastconns
+    add web01
+    add web02
+
+/c/slb/group app_pool
+    ipver v4
+    health tcp_8080
+    metric roundrobin
+    add app01
+
+/c/slb/advhc/health http_basic HTTP
+    name "http_basic"
+    inter 5
+    retry 3
+    timeout 5
+    http
+        response 200 none
+        method GET
+        path "/health"
+        host "example.com"
+
+/c/slb/advhc/health tcp_8080 TCP
+    name "tcp_8080"
+    dport 8080
+    inter 5
+    retry 3
+    timeout 5
+/c/slb/virt vs_web_http
+    ena
+    ipver v4
+    vip 10.10.10.100
+/c/slb/virt vs_web_http/service 80 http
+    group web_pool
+    rport 80
+    pbind clientip
+    ptmout 30
+/c/slb/virt vs_web_http/service 80 http/http/xforward ena
+/c/slb/virt vs_app
+    ena
+    ipver v4
+    vip 10.10.10.101
+/c/slb/virt vs_app/service 8080 basic-slb
+    group app_pool
+    rport 8080
+
+/c/l2/vlan 10
+    name external
+    add 1
+/c/l2/vlan 20
+    name internal
+    add 2
+/c/l3/if 1
+    ena
+    ipver v4
+    addr 10.10.10.5
+    mask 255.255.255.0
+    vlan 10
+    descr self_ext_local
+
+/c/l3/if 2
+    ena
+    ipver v4
+    addr 10.10.20.5
+    mask 255.255.255.0
+    vlan 20
+    descr self_int_local
+
+/c/l3/ha/floatip 1
+    ena
+    ipver v4
+    addr 10.10.10.4
+    if 1
+
+/c/l3/ha/floatip 2
+    ena
+    ipver v4
+    addr 10.10.20.4
+    if 2
+/c/sys
+    hprompt ena
+/c/sys/mmgmt
+    addr 192.168.1.50
+    mask 255.255.255.0
+    gw 192.168.1.1
+/c/sys/ntp
+    prisrv 10.0.0.10
+    secsrv 10.0.0.11
+    tzone -04:00
+/c/sys/syslog
+    hst1 10.0.0.20 7 7 all 514
+/c/sys/ssnmp
+    rcomm public
+/c/l3/route/ip4/add 10.10.30.0 255.255.255.0 10.10.20.1
+/c/l3/gw 1
+    addr 10.10.10.1
+    ena  

@@ -1,0 +1,71 @@
+
+/c/slb/real web01
+    ena
+    rip 10.10.20.11
+    name web01
+
+/c/slb/real web02
+    ena
+    rip 10.10.20.12
+    name web02
+
+/c/slb/real app01
+    ena
+    rip 10.10.30.21
+    name app01
+    shut psession
+
+/c/slb/group web_pool
+    ipver v4
+    health http_basic
+    metric leastconns
+    add web01
+    add web02
+
+/c/slb/group app_pool
+    ipver v4
+    health tcp_8080
+    metric round-robin
+    add app01
+
+/c/slb/advhc/health http_basic HTTP
+    name "http_basic"
+    inter 5
+    retry 3
+    timeout 5
+    http
+        response 200 none
+        method GET
+        path "/health"
+        host "example.com"
+
+/c/slb/advhc/health tcp_8080 TCP
+    name "tcp_8080"
+    dport 8080
+    inter 5
+    retry 3
+    timeout 5
+/c/slb/virt vs_web_http
+    ena
+    ipver v4
+    vip 10.10.10.100
+/c/slb/virt vs_web_http/service 80 http
+    group web_pool
+    rport 80
+    pbind clientip
+    ptmout 30
+/c/slb/virt vs_web_http/service 80 http/http/xforward ena
+/c/slb/virt vs_app
+    ena
+    ipver v4
+    vip 10.10.10.101
+/c/slb/virt vs_app/service 8080 basic-slb
+    group app_pool
+    rport 8080
+/c/sys
+    hprompt ena
+/c/sys/mmgmt
+/c/sys/ntp
+/c/sys/ssnmp
+/c/l3/route
+    add 10.10.30.0 255.255.255.0 10.10.20.1

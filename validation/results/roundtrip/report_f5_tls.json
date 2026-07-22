@@ -1,0 +1,40 @@
+{
+  "label": "f5-tls",
+  "vip": "10.42.1.100:443",
+  "https": true,
+  "when": "2026-07-07T14:28:29.801Z",
+  "distribution": {
+    "requests": 30,
+    "errors": 0,
+    "counts": {
+      "web1": 20,
+      "web2": 10
+    }
+  },
+  "persistence": {
+    "firstBackend": "web1",
+    "cookie": "RDWRLAB",
+    "stuck": 20,
+    "moved": 0,
+    "errors": 0,
+    "pass": true
+  },
+  "health": {
+    "victim": "web1",
+    "before": {
+      "web2": 16,
+      "web1": 14
+    },
+    "during": {
+      "web2": 30
+    },
+    "after": {
+      "web2": 11,
+      "web1": 19
+    },
+    "duringErrors": 0,
+    "ejected": true,
+    "restored": true,
+    "pass": true
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "host": "10.210.240.137",
+  "when": "2026-07-07T14:42:03.007Z",
+  "totalLines": 67,
+  "linesSent": 72,
+  "linesUnsent": 0,
+  "errorCount": 2,
+  "findings": [
+    {
+      "line": "    pbind cookie insert \"RDWRLAB\" 10 10",
+      "error": "Error:License for Cookie persistence is not installed/enabled."
+    },
+    {
+      "line": "    pbind cookie insert \"RDWRLAB\" 10 10",
+      "error": "Error:License for Cookie persistence is not installed/enabled."
+    }
+  ]
+}

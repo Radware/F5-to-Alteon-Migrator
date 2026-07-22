@@ -1,0 +1,49 @@
+
+/c/l2/vlan 10
+    name external
+    add 1.1
+/c/l2/vlan 20
+    name internal
+    add 1.2
+/c/l3/if 1
+    ena
+    ipver v4
+    addr 10.10.10.5
+    mask 255.255.255.0
+    vlan 10
+    descr self_ext_local
+
+/c/l3/if 2
+    ena
+    ipver v4
+    addr 10.10.20.5
+    mask 255.255.255.0
+    vlan 20
+    descr self_int_local
+
+/c/l3/ha/floatip 1
+    ena
+    ipver v4
+    addr 10.10.10.4
+    if 1
+
+/c/l3/ha/floatip 2
+    ena
+    ipver v4
+    addr 10.10.20.4
+    if 2
+/c/sys
+    hprompt ena
+/c/sys/mmgmt
+    addr 192.168.1.50
+    mask 255.255.255.0
+/c/sys/ntp
+/c/sys/syslog
+    hst1 10.0.0.20 7 7 all 514
+/c/sys/ssnmp
+    rcomm public
+/c/l3/route
+    add 10.10.30.0 255.255.255.0 10.10.20.1
+/c/l3/gw 1
+    addr 10.10.10.1
+    ena  

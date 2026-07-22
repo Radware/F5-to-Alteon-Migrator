@@ -1,0 +1,43 @@
+#cloud-config
+# Backend VM for the round-trip lab. Replace __ID__ with web1/web2 at deploy
+# time. Runs the identifiable test backend (same code as
+# validation/roundtrip/backend.js, inlined so the VM needs no repo access)
+# on :8080 as a systemd service.
+package_update: true
+packages:
+  - nodejs
+write_files:
+  - path: /opt/backend.js
+    permissions: "0644"
+    content: |
+      'use strict';
+      const http = require('http');
+      const id = process.argv[2] || 'backend';
+      const port = parseInt(process.argv[3] || '8080', 10);
+      let healthy = true;
+      http.createServer((req, res) => {
+        const respond = (code, body, type) => {
+          res.writeHead(code, { 'Content-Type': type || 'application/json', 'X-Backend': id });
+          res.end(body);
+        };
+        if (req.url === '/health') {
+          return respond(healthy ? 200 : 503, (healthy ? 'OK ' : 'DOWN ') + id, 'text/plain');
+        }
+        if (req.method === 'POST' && req.url === '/admin/down') { healthy = false; return respond(200, 'health=down ' + id, 'text/plain'); }
+        if (req.method === 'POST' && req.url === '/admin/up') { healthy = true; return respond(200, 'health=up ' + id, 'text/plain'); }
+        respond(200, JSON.stringify({ backend: id, port, path: req.url, ts: Date.now() }));
+      }).listen(port, () => console.log('backend ' + id + ' listening on :' + port));
+  - path: /etc/systemd/system/backend.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Round-trip test backend
+      After=network.target
+      [Service]
+      ExecStart=/usr/bin/node /opt/backend.js __ID__ 8080
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now backend.service

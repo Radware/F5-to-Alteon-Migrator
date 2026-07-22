@@ -1,0 +1,39 @@
+{
+  "label": "f5",
+  "vip": "10.42.1.100",
+  "https": false,
+  "when": "2026-07-07T14:27:17.514Z",
+  "distribution": {
+    "requests": 60,
+    "errors": 0,
+    "counts": {
+      "web1": 40,
+      "web2": 20
+    }
+  },
+  "persistence": {
+    "firstBackend": "web2",
+    "cookie": "RDWRLAB",
+    "stuck": 20,
+    "moved": 0,
+    "errors": 0,
+    "pass": true
+  },
+  "health": {
+    "victim": "web1",
+    "before": {
+      "web1": 30
+    },
+    "during": {
+      "web2": 30
+    },
+    "after": {
+      "web2": 11,
+      "web1": 19
+    },
+    "duringErrors": 0,
+    "ejected": true,
+    "restored": true,
+    "pass": true
+  }
+}
