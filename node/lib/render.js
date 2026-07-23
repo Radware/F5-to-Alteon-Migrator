@@ -209,8 +209,25 @@ function render(ctx) {
     out += '\n/c/l2/vlan ' + vlan.tag + '\n    ena\n    name ' + name;
     for (const port of vlan.interfaces) out += '\n    add ' + port;
   }
-  // interfaces
+  // interfaces. Alteon refuses to apply two IP interfaces in one subnet
+  // ("Error: IP Interfaces N and M are on the same subnet." - verified live
+  // on 34.5.7); F5 configs can carry several same-subnet self-IPs (typically
+  // both HA units' selfs). Emit the first, flag the rest.
+  const ifNets = new Map();
+  const netOf = (ip, mask) => {
+    if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip || '') || !/^\d+\.\d+\.\d+\.\d+$/.test(mask || '')) return null;
+    const n = (s) => s.split('.').reduce((a, o) => (a * 256) + (+o), 0);
+    return (((n(ip) & n(mask)) >>> 0) + '/' + mask);
+  };
   for (const [name, itf] of ctx.ifs) {
+    const net = netOf(itf.addr, itf.mask);
+    if (net && ifNets.has(net)) {
+      ctx.warnManual('L3 Interface', name, 'Self-IP ' + itf.addr + ' shares a subnet with interface ' +
+        ifNets.get(net) + ' - Alteon rejects two IP interfaces in the same subnet at apply ' +
+        '(usually this is the HA peer\'s self-IP: configure it on the SECOND Alteon of the HA pair). Interface omitted!');
+      continue;
+    }
+    if (net) ifNets.set(net, itf.addr);
     out += '\n/c/l3/if ' + itf.ifId + '\n    ena\n    ipver v4\n    addr ' + itf.addr +
       '\n    mask ' + itf.mask + '\n    vlan ' + itf.vlanTag + '\n    descr ' + name + '\n';
     if (itf.peer) out += '    peer ' + itf.peer + '\n';

@@ -148,6 +148,9 @@ function splitByRouteDomain(ctx) {
   };
   for (const [k, r] of ctx.reals) track(r.attrs.get('rip'), r.rdId || '0', 'real ' + k);
   for (const [k, v] of ctx.virts) track(v.vip, v.rd || '0', 'virt ' + k);
+  for (const [k, i] of ctx.ifs) track(i.addr, i.rdId || '0', 'interface ' + k);
+  for (const [k, f] of ctx.floats) track(f.addr, f.rdId || '0', 'floating IP ' + k);
+  for (const [, g] of ctx.gws) track(g.addr, g.rdId || '0', 'gateway');
 
   // per-RD monitor usage (logexp components included)
   const monRd = new Map();                            // monitor key(string) -> Set(rd)
@@ -196,24 +199,40 @@ function splitByRouteDomain(ctx) {
 // (typically the firewall) — same isolation intent as F5 RDs, one device.
 // Overlapping address space still requires the per-RD split (segments share
 // one routing table).
+// network address of ip/mask as a comparable string ('' when not computable)
+function subnetKey(ip, mask) {
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip || '') || !/^\d+\.\d+\.\d+\.\d+$/.test(mask || '')) return ip || '';
+  const n = (s) => s.split('.').reduce((a, o) => (a * 256) + (+o), 0);
+  return 'net:' + ((n(ip) & n(mask)) >>> 0) + '/' + mask;
+}
+
 function buildSegments(ctx) {
   const ids = new Set();
   for (const [, r] of ctx.reals) if (r.rdId && r.rdId !== '0') ids.add(r.rdId);
   for (const [, v] of ctx.virts) if (v.rd && v.rd !== '0') ids.add(v.rd);
   for (const id of ctx.rdVlans.values()) if (id !== '0') ids.add(id);
   if (!ids.size) return false;
-  // overlap check (same test as the split path)
+  // overlap check (same test as the split path). Covers EVERY address class
+  // that must be unique on one Alteon: reals, VIPs, interface/self IPs,
+  // floating IPs and gateways — F5 allows the same IP in two route domains,
+  // Alteon rejects the duplicate at apply, so any cross-RD duplicate forces
+  // the per-RD split (separate instances) instead of segmentation.
   const seen = new Map();
-  for (const [k, r] of ctx.reals) {
-    const ip = r.attrs.get('rip'), rd = r.rdId || '0';
-    if (ip && seen.has(ip) && seen.get(ip) !== rd) return false;
-    if (ip) seen.set(ip, rd);
-  }
-  for (const [, v] of ctx.virts) {
-    const rd = v.rd || '0';
-    if (v.vip && seen.has(v.vip) && seen.get(v.vip) !== rd) return false;
-    if (v.vip) seen.set(v.vip, rd);
-  }
+  let overlap = false;
+  const check = (ip, rd) => {
+    if (!ip) return;
+    if (seen.has(ip) && seen.get(ip) !== rd) overlap = true;
+    else seen.set(ip, rd);
+  };
+  for (const [, r] of ctx.reals) check(r.attrs.get('rip'), r.rdId || '0');
+  for (const [, v] of ctx.virts) check(v.vip, v.rd || '0');
+  for (const [, f] of ctx.floats) check(f.addr, f.rdId || '0');
+  for (const [, g] of ctx.gws) check(g.addr, g.rdId || '0');
+  // interfaces compare at SUBNET level: the device refuses "IP Interfaces N
+  // and M are on the same subnet" at apply (verified live on 34.5.7), so even
+  // non-identical IPs in one subnet across RDs force the split.
+  for (const [, i] of ctx.ifs) check(subnetKey(i.addr, i.mask), i.rdId || '0');
+  if (overlap) return false;
   ctx.segments = [];
   let filtId = 1800;
   for (const id of [...ids].sort((a, b) => +a - +b)) {

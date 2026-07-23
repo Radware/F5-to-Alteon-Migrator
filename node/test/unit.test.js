@@ -822,6 +822,83 @@ test('SEGMENT: RD-scoped default route ("network default%N") feeds the segment g
   assert.match(res2.rdOutputs['5'], /\/c\/l3\/route\/ip4\/add 10\.77\.0\.0 255\.255\.0\.0 10\.2\.2\.254/);
 });
 
+test('SEGMENT: duplicate SELF-IP across RDs refuses segmentation (F5 allows dup IPs per RD; Alteon does not)', () => {
+  const conf = `net route-domain /Common/RD1 {
+    id 1
+    vlans {
+        /Common/v1
+    }
+}
+net route-domain /Common/RD2 {
+    id 2
+    vlans {
+        /Common/v2
+    }
+}
+net vlan /Common/v1 {
+    tag 10
+    interfaces {
+        1.1 { }
+    }
+}
+net vlan /Common/v2 {
+    tag 20
+    interfaces {
+        1.2 { }
+    }
+}
+net self /Common/s1 {
+    address 10.5.5.1%1/24
+    vlan /Common/v1
+}
+net self /Common/s2 {
+    address 10.5.5.1%2/24
+    vlan /Common/v2
+}
+ltm virtual /Common/vs1 {
+    destination /Common/10.6.6.1%1:80
+    mask 255.255.255.255
+    pool /Common/p1
+}
+ltm pool /Common/p1 {
+    members {
+        /Common/n1:80 {
+            address 10.6.6.10%1
+        }
+    }
+}
+`;
+  const res = migrate([conf]);                    // auto: dup if-IP must force SPLIT
+  assert.doesNotMatch(res.output, /\/c\/slb\/segment/);
+  // each RD file carries its own copy of the IP - never two on one device
+  const one = (res.output.match(/addr 10\.5\.5\.1\n/g) || []).length;
+  assert.ok(one <= 1, 'main output must not carry the duplicate interface twice');
+  assert.ok(res.rdOutputs['1'] || res.rdOutputs['2'], 'expected per-RD split outputs');
+  assert.ok(res.diagnostics.some(d => d.issue.includes('overlapping address space')));
+});
+
+test('LIVE-21: two self-IPs in ONE subnet emit a single interface (device refuses same-subnet interfaces at apply)', () => {
+  const conf = `net vlan /Common/v10 {
+    tag 10
+    interfaces {
+        1.1 { }
+    }
+}
+net self /Common/unit_a {
+    address 10.20.30.5/24
+    vlan /Common/v10
+}
+net self /Common/unit_b {
+    address 10.20.30.6/24
+    vlan /Common/v10
+}
+`;
+  const res = migrate([conf]);
+  assert.match(res.output, /addr 10\.20\.30\.5\n/);
+  assert.doesNotMatch(res.output, /addr 10\.20\.30\.6\n/);
+  assert.ok(res.diagnostics.some(d => d.issue.includes('same subnet')));
+});
+
 test('SEGMENT: forced split mode still produces per-RD outputs', () => {
   const res = migrate([MULTI_RD_CONF], { rdMode: 'split' });
   assert.ok(res.rdOutputs['5'], 'split mode must produce the RD5 output');
