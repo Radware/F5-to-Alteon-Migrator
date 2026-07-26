@@ -877,6 +877,21 @@ ltm pool /Common/p1 {
   assert.ok(res.diagnostics.some(d => d.issue.includes('overlapping address space')));
 });
 
+test('LOG: each diagnostic carries the ORIGINAL F5 stanza verbatim', () => {
+  const conf = `ltm virtual /Common/v1 {
+    destination /Common/1.2.3.4:80
+    mask 255.255.255.255
+    rules {
+        /Common/my_irule
+    }
+}
+`;
+  const res = migrate([conf]);
+  assert.match(res.log2 + res.log1, /ORIGINAL F5 CONFIGURATION/);
+  assert.match(res.log2 + res.log1, /\| ltm virtual \/Common\/v1 \{/);
+  assert.match(res.log2 + res.log1, /\| +destination \/Common\/1\.2\.3\.4:80/);
+});
+
 test('LIVE-21: two self-IPs in ONE subnet emit a single interface (device refuses same-subnet interfaces at apply)', () => {
   const conf = `net vlan /Common/v10 {
     tag 10

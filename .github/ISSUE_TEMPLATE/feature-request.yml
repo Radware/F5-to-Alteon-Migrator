@@ -1,0 +1,34 @@
+name: Support another F5 construct / feature request
+description: Ask for a new conversion capability or a tool improvement
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See [ROADMAP-NEXT.md](../../blob/main/ROADMAP-NEXT.md) for what is already
+        planned - a comment on an existing item ("we need this, here is our config")
+        is the fastest way to get it prioritized. Real customer demand is how we rank.
+  - type: textarea
+    id: what
+    attributes:
+      label: What F5 construct or capability is missing
+      placeholder: "ltm policy (L7 host/path routing) is flagged as manual - we have 90 of them"
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example F5 configuration (sanitized)
+      description: A representative stanza helps us build the right mapping and a regression test.
+      render: text
+  - type: textarea
+    id: alteon
+    attributes:
+      label: How you would configure the equivalent on Alteon (if you know)
+      render: text
+  - type: input
+    id: scale
+    attributes:
+      label: How many objects of this type are in your configs?
+      placeholder: "94 across 12 devices"

@@ -1,0 +1,47 @@
+name: Tool bug (crash, CLI, packaging)
+description: The tool crashed, refused valid input, or behaved wrongly outside of conversion accuracy
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a wrong or missing *conversion*, please use the "Conversion problem"
+        template instead - it asks for the F5 stanza we need.
+  - type: input
+    id: version
+    attributes:
+      label: Tool version
+      placeholder: "0.5.8"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS and Node.js version
+      placeholder: "Windows 11 / Node 20.11 (node --version)"
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command you ran
+      placeholder: "npx @radware/f5-to-alteon ./qkviews/"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected vs what happened
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Full error output / stack trace
+      render: text
+  - type: input
+    id: input
+    attributes:
+      label: Input type and size
+      placeholder: "2.5 GB qkview / folder of 15 qkviews / bare bigip.conf"

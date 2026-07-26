@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Radware Support (customers)
+    url: https://support.radware.com
+    about: Production-impacting migrations, or configs that cannot be shared publicly - open a support case and reference your GitHub issue number.
+  - name: What is planned next
+    url: https://github.com/Radware/F5-to-Alteon-Migrator/blob/main/ROADMAP-NEXT.md
+    about: Check the roadmap before filing a feature request - commenting on an existing item helps us prioritize it.

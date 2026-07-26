@@ -38,6 +38,7 @@ function shortenIds(ctx) {
     // punctuation in IDs with "Special characters are not allowed"
     const suffix = '_' + ctx.nextId('id');
     const n = oldName.slice(0, 32 - suffix.length) + suffix;
+    ctx.renamedFrom.set(n, oldName);   // later diagnostics can still find the F5 source
     ctx.warnManual(kind, oldName, 'Name exceeds the 32-char Alteon ID limit; renamed to "' + n + '". All references were updated.');
     return n;
   };
@@ -262,7 +263,11 @@ function buildSegments(ctx) {
 function migrate(texts, opts) {
   const rdMode = (opts && opts.rdMode) || 'auto';
   const ctx = new Context();
-  for (const text of texts) parseAll(text.replace(/\r\n/g, '\n'), ctx);
+  for (const text of texts) {
+    const t = text.replace(/\r\n/g, '\n');
+    ctx.indexSource(t);          // keep the original stanzas for the logs
+    parseAll(t, ctx);
+  }
   shortenIds(ctx);
   let segmented = false;
   if (rdMode === 'segment' || rdMode === 'auto') {

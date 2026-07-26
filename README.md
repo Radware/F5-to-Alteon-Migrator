@@ -19,25 +19,25 @@ the generated configs.
 **1. Zero-install (recommended)** - needs only [Node.js](https://nodejs.org) 16+:
 
 ```bash
-npx @radware/f5-to-alteon device.qkview -o out/
+npx @radware/f5-to-alteon device.qkview
 ```
 
 It is not limited to qkview - feed it whatever export you have, the input
 type is auto-detected:
 
 ```bash
-npx @radware/f5-to-alteon backup.ucs -o out/                      # UCS backup archive
-npx @radware/f5-to-alteon bigip_base.conf bigip.conf -o out/      # bare tmsh config files
-npx @radware/f5-to-alteon bigip.conf -o out/                      # a single bigip.conf
-npx @radware/f5-to-alteon ./extracted-qkview-dir/ -o out/         # an extracted archive folder
-npx @radware/f5-to-alteon ./folder-with-many-configs/ -o out/     # multi-device dump (it lists them, you pick)
+npx @radware/f5-to-alteon backup.ucs                       # UCS backup archive
+npx @radware/f5-to-alteon bigip_base.conf bigip.conf       # bare tmsh config files
+npx @radware/f5-to-alteon bigip.conf                       # a single bigip.conf
+npx @radware/f5-to-alteon ./extracted-qkview-dir/          # an extracted archive folder
+npx @radware/f5-to-alteon ./folder-of-qkviews/             # BULK: converts every archive inside
 ```
 
 **2. Global install** - same requirement, then the command is always available:
 
 ```bash
 npm install -g @radware/f5-to-alteon
-f5-to-alteon device.qkview -o out/
+f5-to-alteon device.qkview
 ```
 
 **3. From this repository** - no npm registry access needed:
@@ -45,7 +45,7 @@ f5-to-alteon device.qkview -o out/
 ```bash
 git clone https://github.com/Radware/F5-to-Alteon-Migrator.git
 cd F5-to-Alteon-Migrator/node
-node bin/f5-to-alteon.js <input> -o out/
+node bin/f5-to-alteon.js <input>
 ```
 
 All three are identical on Windows (PowerShell/CMD), macOS, and Linux.
@@ -56,17 +56,18 @@ All three are identical on Windows (PowerShell/CMD), macOS, and Linux.
 
 ### Inputs (auto-detected)
 
-`.qkview` / `.ucs` archives (streamed, multi-GB OK) / extracted archive
-folders / bare `bigip.conf` / `bigip_base.conf` files / a folder of configs
-from several devices (the tool lists them and asks which one).
+`.qkview` / `.ucs` archives (streamed, multi-GB OK) / extracted archive folders /
+bare `bigip.conf` / `bigip_base.conf` files / **a folder of many archives (bulk
+migration - every device converted into its own output folder)**.
 
 ### Outputs
 
-`<name>_output.txt` (the Alteon CLI config) + `<name>_log1.txt`
-(manual-completion items) + `<name>_log2.txt` (possibly-unsupported items).
+Written to a folder named after the input (or `-o <dir>`):
+`alteon-config.txt` (apply this) + `needs-manual-work.txt` (every item quotes the
+original F5 stanza verbatim) + `not-supported.txt`.
 Nothing is ever silently dropped - every unconvertible object is logged with
 guidance. With route domains in **split** mode you also get one
-`<name>_rdN_output.txt` per RD.
+`alteon-config-routedomain-N.txt` per RD.
 
 ## What it converts
 
@@ -110,8 +111,30 @@ Eight rounds of live validation, documented in
 
 ```bash
 cd node
-npm test     # 79 tests, all passing
+npm test     # 82 tests, all passing
 ```
+
+## Found a problem? Please tell us
+
+**Open an issue** - conversion reports are the single biggest reason this tool
+works as well as it does: 37 defects were found and fixed from real customer
+configurations people sent in.
+
+[**Report a conversion problem, bug, or missing capability**](https://github.com/Radware/F5-to-Alteon-Migrator/issues/new/choose)
+
+Include as much as you can - ideally the F5 stanza involved (`needs-manual-work.txt`
+already quotes it for you), what the tool produced, the exact Alteon error if the
+device rejected it, and the versions on both sides. Attaching the config or qkview
+is very welcome when you are able to.
+
+> **Before attaching files:** F5 configurations contain IPs, hostnames and
+> sometimes credentials, and GitHub issues are public. Sanitize first, or attach
+> only the relevant stanza. If it cannot be shared publicly, say so in the issue -
+> Radware customers can send it privately through a
+> [support case](https://support.radware.com) referencing the issue number.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide, including how to add a
+regression test with your fix.
 
 ## Repository layout
 
@@ -121,8 +144,10 @@ npm test     # 79 tests, all passing
 | [`fixtures/`](fixtures/) | Synthetic/sanitized test configs incl. the golden legacy-equivalence pair and the segmentation traffic-test fixture |
 | [`validation/`](validation/) | Live-device validation harness (non-destructive stager, behavioral test driver) + status + result reports |
 | [`DELTAS.md`](DELTAS.md) | Every deliberate difference vs the legacy tool, with the live error that motivated it |
-| [`ROADMAP.md`](ROADMAP.md) | Phase plan and what's next (iRules, GTM, ...) |
-| [`docs/`](docs/) | Proposal + progress reports |
+| [`ROADMAP.md`](ROADMAP.md) | Phase plan (phases 1-3 complete) |
+| [`ROADMAP-NEXT.md`](ROADMAP-NEXT.md) | What to build next, ranked by what real customer configs contain |
+| [`docs/`](docs/) | Proposal + progress reports + the customer User Guide |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to report issues and contribute fixes |
 | [`legacy-reference/`](legacy-reference/) | Read-only copy of the original tool |
 
 ## For maintainers

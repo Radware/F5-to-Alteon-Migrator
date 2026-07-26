@@ -27,7 +27,7 @@ self-contained (~30 kB).
 The fastest way (no installation at all):
 
 ```bash
-npx @radware/f5-to-alteon <your-f5-file> -o out/
+npx @radware/f5-to-alteon <your-f5-file>
 ```
 
 `<your-f5-file>` can be ANY form of F5 export - a `.qkview`, a `.ucs`, bare
@@ -35,17 +35,17 @@ npx @radware/f5-to-alteon <your-f5-file> -o out/
 (all auto-detected; full list in the table below):
 
 ```bash
-npx @radware/f5-to-alteon device.qkview -o out/
-npx @radware/f5-to-alteon backup.ucs -o out/
-npx @radware/f5-to-alteon bigip_base.conf bigip.conf -o out/
-npx @radware/f5-to-alteon ./extracted-qkview-dir/ -o out/
+npx @radware/f5-to-alteon device.qkview
+npx @radware/f5-to-alteon backup.ucs
+npx @radware/f5-to-alteon bigip_base.conf bigip.conf
+npx @radware/f5-to-alteon ./extracted-qkview-dir/
 ```
 
 Or install once, then use anywhere:
 
 ```bash
 npm install -g @radware/f5-to-alteon
-f5-to-alteon <your-f5-file> -o out/
+f5-to-alteon <your-f5-file>
 ```
 
 Both work identically in Windows PowerShell / CMD, macOS Terminal, and any
@@ -58,12 +58,12 @@ auto-detects what you give it:
 
 | You have | Example |
 |----------|---------|
-| A qkview support archive (even multi-GB) | `f5-to-alteon device.qkview -o out/` |
-| A UCS backup archive | `f5-to-alteon backup.ucs -o out/` |
-| An extracted qkview/UCS folder | `f5-to-alteon ./extracted-dir/ -o out/` |
-| Bare config files | `f5-to-alteon bigip_base.conf bigip.conf -o out/` |
-| A single bigip.conf | `f5-to-alteon bigip.conf -o out/` |
-| A folder of configs from several devices | `f5-to-alteon ./dump-folder/ -o out/` (lists the devices and asks which one) |
+| A qkview support archive (even multi-GB) | `f5-to-alteon device.qkview` |
+| A UCS backup archive | `f5-to-alteon backup.ucs` |
+| An extracted qkview/UCS folder | `f5-to-alteon ./extracted-dir/` |
+| Bare config files | `f5-to-alteon bigip_base.conf bigip.conf` |
+| A single bigip.conf | `f5-to-alteon bigip.conf` |
+| A folder holding many archives | `f5-to-alteon ./dump-folder/` (BULK: converts every device into its own folder) |
 
 Large archives are streamed - the config files inside are found in seconds
 without unpacking the whole archive to disk.
@@ -71,16 +71,39 @@ without unpacking the whole archive to disk.
 **2. Run the conversion.**
 
 ```bash
-f5-to-alteon device.qkview -o out/ --name mydevice
+f5-to-alteon device.qkview
 ```
 
-You get a one-line summary of what was converted, plus three files in `out/`:
+No output path needed: a folder named after the input is created next to it
+(`device.qkview` -> `device/`). Use `-o <dir>` to put it somewhere else.
+You get a one-line summary plus three clearly named files:
 
 | File | What it is |
 |------|-----------|
-| `mydevice_output.txt` | The Alteon CLI configuration - paste/stream it into the Alteon CLI |
-| `mydevice_log1.txt` | **Manual-completion items** - converted with a caveat you should review (renamed IDs, port mappings, gateway targets, ...) |
-| `mydevice_log2.txt` | **Possibly-unsupported items** - F5 features with no automatic Alteon equivalent (iRules, GTM, ...), each with guidance |
+| `alteon-config.txt` | The Alteon CLI configuration - paste/stream it into the Alteon CLI |
+| `needs-manual-work.txt` | Items to finish manually (renamed IDs, port mappings, gateway targets, ...). **Each entry quotes the original F5 configuration block**, so you can act without opening the source config |
+| `not-supported.txt` | F5 features with no automatic Alteon equivalent (iRules, GTM, ...), each with guidance |
+
+With route domains in split mode you also get one
+`alteon-config-routedomain-<N>.txt` per route domain.
+
+**Bulk migration.** Point the tool at a folder holding several archives and it
+converts every one of them, each into its own output folder:
+
+```bash
+f5-to-alteon ./all-my-qkviews/
+```
+
+```
+all-my-qkviews/
+  device-a.qkview
+  device-b.qkview
+  device-a/    <- alteon-config.txt, needs-manual-work.txt, not-supported.txt
+  device-b/    <- same
+```
+
+A folder containing a single extracted qkview (`config/bigip.conf`) is still
+treated as one device. Force either behavior with `--bulk` or `--single`.
 
 **3. Review the two logs.** The tool never silently drops anything: every F5
 object it cannot fully convert appears in a log with the object name, the
@@ -95,8 +118,9 @@ virtuals, persistence before proxy-IP blocks, etc.).
 
 | Option | Meaning |
 |--------|---------|
-| `-o, --out <dir>` | Output directory (default: alongside the input) |
-| `--name <prefix>` | Output filename prefix (default: derived from the input) |
+| `-o, --out <dir>` | Write here instead of the auto-named folder (in bulk mode: the parent folder) |
+| `--name <name>` | Override the output folder name (single input only) |
+| `--bulk` / `--single` | Force bulk or single-device handling of a folder |
 | `--rd-mode auto\|segment\|split` | How to handle F5 **route domains** (see below). Default `auto`. |
 
 ## Route domains
@@ -111,7 +135,7 @@ F5 route domains (`10.1.2.3%4` addressing) are converted, not ignored:
   gateway (taken from the RD's default route). If address spaces overlap, it
   automatically falls back to per-RD splitting.
 - **`--rd-mode split`**: one self-contained output file per route domain
-  (`<name>_rdN_output.txt`), each meant for its OWN Alteon instance (vADC/VA).
+  (`alteon-config-routedomain-N.txt`), each meant for its OWN Alteon instance (vADC/VA).
 - **`--rd-mode segment`**: force segmentation (falls back to split, with a
   warning, if RDs overlap).
 
@@ -144,10 +168,23 @@ isolation all verified with tcpdump).
   `config/bigip.conf`. If it's a folder of configs from several devices, the
   tool lists what it found so you can pick one.
 - **Output rejected by the Alteon** - check the version (validated on 34.x)
-  and check `_log1.txt`: platform-capacity items (e.g. more pools than the
+  and check `needs-manual-work.txt`: platform-capacity items (e.g. more pools than the
   target supports) and physical-port mappings are flagged there.
 - **Windows note**: PowerShell, CMD, and Git Bash all work; paths with spaces
   need quotes, same as any CLI.
+
+## Found a problem? Please open an issue
+
+Conversion reports are how this tool improves - most of its fixes came from real
+customer configurations that did not convert cleanly.
+
+**[Report it here](https://github.com/Radware/F5-to-Alteon-Migrator/issues/new/choose)**
+and include as much as you can: the F5 stanza involved (`needs-manual-work.txt`
+already quotes it for you), what the tool produced, the exact Alteon error if the
+device rejected the line, and both versions. Attaching the config or qkview is
+welcome - but sanitize it first, because GitHub issues are public. If the data
+cannot be shared publicly, say so and send it privately through a
+[Radware support case](https://support.radware.com).
 
 ## Project
 

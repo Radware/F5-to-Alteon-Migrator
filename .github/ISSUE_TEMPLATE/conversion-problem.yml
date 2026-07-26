@@ -1,0 +1,71 @@
+name: Conversion problem
+description: Something converted incorrectly, was skipped, or the Alteon rejected the output
+title: "[conversion] "
+labels: ["conversion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting - conversion issues are the most valuable reports we get.
+        Nearly every fix in this tool came from a real customer config.
+
+        **Before you attach anything:** F5 configurations contain IP addresses,
+        hostnames, certificate names and sometimes credentials. Please sanitize
+        them, or attach only the specific object stanza involved. If the data
+        cannot be shared publicly, say so - Radware employees and customers can
+        send it privately through their Radware contact or a support case, and
+        we will reference the issue number.
+  - type: input
+    id: version
+    attributes:
+      label: Tool version
+      description: "Output of: npx @radware/f5-to-alteon --help | head -1, or the version you installed"
+      placeholder: "0.5.8"
+    validations:
+      required: true
+  - type: input
+    id: bigip
+    attributes:
+      label: F5 BIG-IP version
+      placeholder: "17.5.1 (from #TMSH-VERSION at the top of bigip.conf)"
+    validations:
+      required: true
+  - type: input
+    id: alteon
+    attributes:
+      label: Target Alteon version / platform
+      placeholder: "34.5.7.0 on Alteon VA"
+  - type: textarea
+    id: what
+    attributes:
+      label: What went wrong
+      description: What did you expect the converted config to contain, and what did you get instead?
+    validations:
+      required: true
+  - type: textarea
+    id: f5source
+    attributes:
+      label: The F5 configuration involved
+      description: |
+        The relevant tmsh stanza(s), sanitized. If the tool flagged the object, the
+        block is already quoted for you in needs-manual-work.txt - paste it from there.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What the tool produced
+      description: The matching lines from alteon-config.txt, plus any entry from needs-manual-work.txt / not-supported.txt.
+      render: text
+  - type: textarea
+    id: device
+    attributes:
+      label: Alteon error message (if the device rejected it)
+      description: Paste the exact CLI error, including the command that triggered it.
+      render: text
+  - type: input
+    id: command
+    attributes:
+      label: Command you ran
+      placeholder: "npx @radware/f5-to-alteon device.qkview --rd-mode auto"
