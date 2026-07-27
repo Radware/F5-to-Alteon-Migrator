@@ -95,7 +95,7 @@ deliberate bug fixes ([`DELTAS.md`](DELTAS.md)).
 
 ## How it was validated
 
-Eight rounds of live validation, documented in
+Nine rounds of live validation, documented in
 [`validation/VALIDATION_STATUS.md`](validation/VALIDATION_STATUS.md):
 
 - **39 real production devices** converted and staged on live Alteons
@@ -114,13 +114,14 @@ Eight rounds of live validation, documented in
   serves a routed client; cross-segment traffic is redirected to the segment
   gateway (tcpdump MAC-level evidence); segment isolation holds (a segment-2
   client is NOT served by a segment-1 VIP).
-- **37 defects** found and fixed along the way (8 legacy-baseline bugs, 10
-  parser gaps, 19+ live-device findings) - each locked in by a regression
+- **39 defects** found and fixed along the way (8 legacy-baseline bugs, 10
+  parser gaps, 21+ live-device findings, including one where the CLI accepted a
+  line and silently ignored it) - each locked in by a regression
   test. The full ledger: [`DELTAS.md`](DELTAS.md).
 
 ```bash
 cd node
-npm test     # 82 tests, all passing
+npm test     # 84 tests, all passing
 ```
 
 ## Found a problem? Please tell us

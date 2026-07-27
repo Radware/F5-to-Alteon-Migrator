@@ -71,9 +71,30 @@ with a clear diagnostic is always preferable to a plausible-looking one.
   different products on both sides. The right deliverable is an inventory
   report for the security team, not a CLI conversion.
 
-## Suggested order
+## Suggested order (updated 2026-07-27, after the Tier-1 validation pass)
 
-1.2 -> 1.1 -> 1.3/1.4/1.5/1.6 (one release, closes most "manual" noise)
--> 2.1 -> 2.2 + 2.3 (makes HTTPS migrations turnkey)
--> 2.5 or 3.1 (customer-driven: DNS-heavy vs routing-heavy)
--> 3.4 (HA) -> 4.x continuously.
+**Done:** 1.1, 1.2, 1.3 (shipped in v0.7.0, live-validated).
+**Parked with written unknowns:** 1.4, 1.5 - see
+[OPEN-QUESTIONS.md](OPEN-QUESTIONS.md). Both need a *behavioral* lab proof, not
+more syntax discovery.
+**Closed:** 1.6 - no configuration surface on the platform.
+
+Recommended next, in order:
+
+1. **2.1 LTM policies to content rules** (94 in the fleets) - the biggest
+   remaining customer-visible win, and self-contained.
+2. **2.2 + 2.3 SSL deep mapping + certificate migration plan** - together these
+   make HTTPS migrations turnkey instead of hand-tuned. Note the Tier-1 pass
+   already found one silent SSL defect (LIVE-22), which suggests the SSL path
+   deserves the same probe-the-device treatment end to end.
+3. **Close 1.4 and 1.5** whenever a lab slot is free - each is a half-day of
+   behavioral testing with the questions already written down.
+4. **2.5 GTM/GSLB** or **3.1 BGP/OSPF** - pick by whichever customer lands
+   first (DNS-heavy vs routing-heavy).
+5. **3.4 HA pair generation** - natural follow-on to LIVE-21.
+6. **4.x product quality** - continuously; the per-device migration report is
+   the highest-value one for PS engagements.
+
+**Method to keep:** discover syntax with `apropos` and the CLI's own usage
+strings, prove behavior on the appliance, and write down what stayed unproven.
+The Tier-1 pass shipped 3 of 6 items and that was the right outcome.

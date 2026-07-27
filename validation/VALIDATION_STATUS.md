@@ -172,6 +172,67 @@ Lab note: 10.210.240.137's data links are down for the same pre-fix reason
 restores its saved config and clears it. .152 carries the (unsaved) round-8
 config.
 
+## Round 9 (2026-07-27): Tier-1 constructs - device-driven discovery, 3 of 6 shipped
+
+Standing instruction for this round: **do not invent anything.** Every mapping
+had to be demonstrated on the appliance, and any construct that could not be
+proven equivalent to the F5 behavior would ship as a diagnostic instead of a
+conversion. Target: live Alteon 34.5.7.0.
+
+### Method
+
+Syntax was discovered from the device, never from memory or documentation:
+
+1. `apropos <term>` - the CLI's own command search - to find whether a
+   configuration surface exists at all.
+2. Deliberate invalid values (`pbind ZZZINVALID`) to make the CLI print its
+   **own usage string**, which is authoritative for accepted keywords.
+3. Build the object, `apply`, then read it back with `cur` and confirm the
+   device reports the intended relationships.
+4. Finally: convert a **real customer config** through the tool and apply the
+   tool's own output.
+
+### Shipped (proven)
+
+| Construct | Evidence |
+|---|---|
+| `net address-list` -> `/c/slb/nwclss` | The element syntax took four attempts; the device rejected `net <ip> <mask>` ("Invalid zero netmask"), `net <ip>/<prefix>` and `net host ...` ("Invalid network type"), and `net subnet <ip> <mask>` ("Invalid **match** type") before accepting **`net subnet <ip> <mask> include`**. Applied from a real customer config: class created with all 10 addresses, each `match include`. |
+| `traffic-matching-criteria` virtual -> filter with `sip <class>` | The filter menu itself documents `sip - Set source IP address **or network class**`. Applied live: `Current filter 1040: enabled, sip Inside_ESA-Ties, dip any, proto any, action allow`, and the class reports "is associated to the following filter". 6 such filters generated from one real device config. |
+| SSL persistence -> `pbind sslid` | See LIVE-22: `pbind ssl` is accepted by the CLI and **silently does nothing** (mode stays `disabled`). `pbind sslid` applied and `cur` reported `pbind sslid ... ptmout 30 mins`. Valid only on SSL-terminating services - an http service's usage string offers `clientip\|cookie\|disable` only. |
+
+### Not shipped - proven partially, mapping unproven
+
+**DNS monitors.** `/c/slb/advhc/health <id> DNS` exists and opens a DNS health
+check menu with `dns` (parameters), `protocol` (TCP/UDP), `dport`, `dest`,
+`inter`, `retry`, `restr`, `timeout`, plus a `domain` parameter at the advhc
+level. What is **not** established: how F5's `qname`, `qtype` and `recv`
+(expected answer) map onto those fields, and whether a mismatch of `recv`
+semantics would silently change health behavior. Nothing is emitted; the
+monitor keeps its existing fallback + diagnostic.
+
+**Standalone SNAT (`ltm snat` / `snat-translation`).** Alteon filters do
+support NAT - `action allow|deny|redir|nat|monitor|goto|outbound-llb` and
+`nat source|dest|mcast`. What is **not** established: the equivalence of F5
+standalone SNAT semantics (which origin addresses get translated to which
+address, and the reverse-path behavior) to a filter-based NAT, which affects
+traffic correctness rather than just syntax. Nothing is emitted.
+
+### Rejected - no equivalent exists on the platform
+
+**`ltm virtual-address` attributes** (per-VIP ARP, route advertisement).
+`apropos advertise` returns **no commands at all**; `apropos arp` returns only
+`/stats/l3/arp`. There is no configuration surface for these on 34.5.7, so no
+tool could migrate them. They remain unconverted by design.
+
+### Note on the real-config apply run
+
+Applying the tool's own output from a real customer device produced
+`Error: bad port "30"` / `"50"` and cascading `unknown command client/server`
+lines. These are the long-standing **environmental** limit (LIVE-6): that F5
+uses chassis ports 30/50 which do not exist on a 2-port lab VA, so the port
+bindings cannot apply there. The network classes and filters themselves applied
+and verified correctly.
+
 ## Harness & safety
 
 Use **`validate3.js`** (`validate.js`/`validate2.js` kept for reference only —

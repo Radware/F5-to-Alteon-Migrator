@@ -191,6 +191,19 @@ welcome - but sanitize it first, because GitHub issues are public. If the data
 cannot be shared publicly, say so and send it privately through a
 [Radware support case](https://support.radware.com).
 
+## Found a problem? Please open an issue
+
+Conversion reports are how this tool improves - most of its fixes came from real
+customer configurations that did not convert cleanly.
+
+**[Report it here](https://github.com/Radware/F5-to-Alteon-Migrator/issues/new/choose)**
+and include as much as you can: the F5 stanza involved (`needs-manual-work.txt`
+already quotes it for you), what the tool produced, the exact Alteon error if the
+device rejected the line, and both versions. Attaching the config or qkview is
+welcome - but sanitize it first, because GitHub issues are public. If the data
+cannot be shared publicly, say so and send it privately through a
+[Radware support case](https://support.radware.com).
+
 ## Project
 
 Source, validation reports, and issue tracking:
