@@ -30,16 +30,20 @@ The fastest way (no installation at all):
 npx @radware/f5-to-alteon <your-f5-file>
 ```
 
-`<your-f5-file>` can be ANY form of F5 export - a `.qkview`, a `.ucs`, bare
-`bigip.conf` / `bigip_base.conf` files, or a folder containing any of these
-(all auto-detected; full list in the table below):
+`<your-f5-file>` can be ANY form of F5 export - the input type is auto-detected,
+so every one of these works:
 
 ```bash
-npx @radware/f5-to-alteon device.qkview
-npx @radware/f5-to-alteon backup.ucs
-npx @radware/f5-to-alteon bigip_base.conf bigip.conf
-npx @radware/f5-to-alteon ./extracted-qkview-dir/
+npx @radware/f5-to-alteon device.qkview                 # qkview support archive
+npx @radware/f5-to-alteon backup.ucs                    # UCS backup archive
+npx @radware/f5-to-alteon bigip_base.conf bigip.conf    # bare tmsh config files
+npx @radware/f5-to-alteon bigip.conf                    # a single bigip.conf
+npx @radware/f5-to-alteon ./extracted-qkview-dir/       # extracted archive folder
+npx @radware/f5-to-alteon ./folder-of-qkviews/          # BULK: every archive inside
 ```
+
+No output path is needed: each device gets a folder named after its input,
+created next to it. Add `-o <dir>` to send the results somewhere else.
 
 Or install once, then use anywhere:
 
