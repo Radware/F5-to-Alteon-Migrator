@@ -1,18 +1,16 @@
 #!/bin/sh
-# Guard: never push the private development history to the PUBLIC repo.
+# Guard: the PUBLIC repo is a published mirror, not a development repo.
 #
-# This repository has two remotes ON PURPOSE:
 #   origin   -> rdwr-seanr/F5-to-Alteon-Migrator  (PRIVATE: full dev history,
-#               customer names, lab details - keep it that way)
+#               customer names, lab details - all development happens here)
 #   radware  -> Radware/F5-to-Alteon-Migrator     (PUBLIC: sanitized snapshots)
 #
-# "git push radware main" would publish EVERY private commit. This hook blocks
-# any push to the public remote that did not come from tools/publish-public.ps1
-# (which sanitizes, tests, and pushes a single squashed snapshot).
+# Two things are blocked:
+#   1. pushing the private development history to the public repo, and
+#   2. developing directly inside a clone of the public repo.
 #
-# Enabled via: git config core.hooksPath .githooks
+# Enabled per clone with: git config core.hooksPath .githooks
 
-remote_name="$1"
 remote_url="$2"
 
 case "$remote_url" in
@@ -22,6 +20,43 @@ esac
 
 [ "$is_public" = "1" ] || exit 0
 [ "$RADWARE_PUBLISH" = "1" ] && exit 0
+
+# Does this clone have the PRIVATE repo configured at all? If not, we are
+# sitting in a clone of the published mirror - a different mistake, and the
+# person needs access to the private repo rather than the release script.
+has_private=0
+for u in $(git remote -v 2>/dev/null | awk '{print $2}'); do
+  case "$u" in
+    *rdwr-seanr/F5-to-Alteon-Migrator*) has_private=1 ;;
+  esac
+done
+
+if [ "$has_private" = "0" ]; then
+  cat >&2 <<'EOF'
+
+  STOP - this is the PUBLISHED repo, not the development repo.
+
+  Radware/F5-to-Alteon-Migrator is a read-only mirror: it receives sanitized
+  snapshots from a private repository where all development happens. Changes
+  pushed here would be overwritten by the next release, and would bypass the
+  sanitization and test gates.
+
+  Instead:
+
+    * Found a bug or need a conversion fixed?
+      Open an issue - that is the right channel and it is very welcome:
+      https://github.com/Radware/F5-to-Alteon-Migrator/issues/new/choose
+
+    * Want to contribute code?
+      Open a pull request here for discussion, OR request access to the
+      development repository from Sean Ramati (seanr@radware.com), the
+      maintainer. Do not develop against this mirror.
+
+  See PUBLISHING.md and CONTRIBUTING.md for the full workflow.
+
+EOF
+  exit 1
+fi
 
 cat >&2 <<'EOF'
 

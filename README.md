@@ -2,6 +2,14 @@
 
 [![npm](https://img.shields.io/npm/v/%40radware%2Ff5-to-alteon)](https://www.npmjs.com/package/@radware/f5-to-alteon)
 
+> **This repository is a published mirror.** Development happens in a private
+> Radware repository; this repo receives sanitized, tested snapshots, so commits
+> made here are overwritten by the next release.
+> **Found a problem? [Open an issue](https://github.com/Radware/F5-to-Alteon-Migrator/issues/new/choose)** - that is
+> the right channel and it is very welcome. To contribute code or get access to
+> the development repository, contact the maintainer, Sean Ramati
+> (seanr@radware.com). See [PUBLISHING.md](PUBLISHING.md).
+
 Convert an **F5 BIG-IP** (tmsh) configuration into a ready-to-apply **Radware
 Alteon** CLI configuration. One command, any input form, on Windows / macOS /
 Linux.

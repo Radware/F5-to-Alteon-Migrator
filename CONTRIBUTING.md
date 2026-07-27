@@ -1,5 +1,17 @@
 # Contributing
 
+> **Where to work:** this GitHub repository is a **published mirror**. All
+> development happens in a private Radware repository, and this one receives
+> sanitized snapshots - so a change committed here is lost at the next release.
+>
+> - **Issues are the primary channel and are very welcome** - see below.
+> - **Code contributions:** open a pull request here for discussion (the
+>   maintainer will port it into the development repo with attribution), or
+>   request access to the development repository from **Sean Ramati
+>   (seanr@radware.com)**.
+> - Maintainers: the two-repo workflow and the release procedure are in
+>   [PUBLISHING.md](PUBLISHING.md).
+
 **Please open an issue whenever something does not convert the way you expect.**
 Almost every improvement in this tool came from someone sending a real
 configuration that did not work - 37 defects were found and fixed exactly that
