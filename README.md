@@ -156,6 +156,7 @@ regression test with your fix.
 | [`DELTAS.md`](DELTAS.md) | Every deliberate difference vs the legacy tool, with the live error that motivated it |
 | [`ROADMAP.md`](ROADMAP.md) | Phase plan (phases 1-3 complete) |
 | [`ROADMAP-NEXT.md`](ROADMAP-NEXT.md) | What to build next, ranked by what real customer configs contain |
+| [`OPEN-QUESTIONS.md`](OPEN-QUESTIONS.md) | Conversions deliberately NOT shipped, and the exact unknown that stopped each |
 | [`docs/`](docs/) | Proposal + progress reports + the customer User Guide |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to report issues and contribute fixes |
 | [`PUBLISHING.md`](PUBLISHING.md) | Two-repo workflow and the sanitized release procedure |
