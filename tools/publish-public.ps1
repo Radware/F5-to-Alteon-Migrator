@@ -66,8 +66,11 @@ if (-not $Message) {
   $version = (Get-Content node/package.json | ConvertFrom-Json).version
   $Message = "Update: F5-to-Alteon Migrator v$version"
 }
-if ($parent) { $commit = ($Message | git commit-tree $tree -p $parent) }
-else         { $commit = ($Message | git commit-tree $tree) }
+# -m (not a pipe): piping a PowerShell string into git prepends a UTF-8 BOM,
+# which then shows up at the start of the published commit message.
+if ($parent) { $commit = (git commit-tree $tree -p $parent -m $Message) }
+else         { $commit = (git commit-tree $tree -m $Message) }
+$commit = $commit.Trim()
 Write-Host "      snapshot commit: $commit"
 Write-Host "      message:         $Message"
 
