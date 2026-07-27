@@ -76,9 +76,35 @@ function bulkMembers(dir) {
 }
 
 // device folder name from an input path: device.qkview -> "device"
+// (resolve first so "." / ".." / a trailing slash give the real folder name)
 function baseName(input) {
-  const b = path.basename(input.replace(/[\\/]+$/, ''));
+  const b = path.basename(path.resolve(input));
   return b.replace(ARCHIVE_RE, '').replace(/\.(conf|log|txt)$/i, '') || 'migration';
+}
+
+// Clear, actionable message when an input path does not exist. The raw
+// ENOENT ("stat 'C:\...'") tells the user nothing about what to do.
+function checkInputs(list) {
+  const missing = list.filter(f => !fs.existsSync(f));
+  if (!missing.length) return;
+  for (const m of missing) console.error('error: input not found: ' + m);
+  const cwd = process.cwd();
+  const here = fs.readdirSync(cwd).filter(f => ARCHIVE_RE.test(f));
+  console.error('');
+  if (here.length) {
+    console.error('This folder (' + cwd + ') contains ' + here.length +
+      ' F5 archive(s): ' + here.slice(0, 4).join(', ') + (here.length > 4 ? ', ...' : ''));
+    console.error('To convert all of them, run the tool on the current folder:');
+    console.error('    f5-to-alteon .');
+    console.error('Or convert one device:');
+    console.error('    f5-to-alteon ' + here[0]);
+  } else {
+    console.error('Give the tool a path that exists - for example:');
+    console.error('    f5-to-alteon device.qkview       (one device)');
+    console.error('    f5-to-alteon .                   (every archive in this folder)');
+    console.error('    f5-to-alteon C:\\path\\to\\qkviews  (every archive in that folder)');
+  }
+  process.exit(1);
 }
 
 function writeResult(res, dir, label) {
@@ -113,6 +139,7 @@ async function convertOne(inputs, dir, label) {
 }
 
 (async () => {
+  checkInputs(files);
   // ---- bulk: a folder holding several archives ----
   let bulk = null;
   if (files.length === 1) {

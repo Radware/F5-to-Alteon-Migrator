@@ -22,15 +22,16 @@ the generated configs.
 npx @radware/f5-to-alteon device.qkview
 ```
 
-It is not limited to qkview - feed it whatever export you have, the input
-type is auto-detected:
+It is not limited to qkview - feed it whatever export you have, the input type
+is auto-detected. `.` means "the folder I am in", which is how you bulk-convert:
 
 ```bash
-npx @radware/f5-to-alteon backup.ucs                       # UCS backup archive
-npx @radware/f5-to-alteon bigip_base.conf bigip.conf       # bare tmsh config files
-npx @radware/f5-to-alteon bigip.conf                       # a single bigip.conf
-npx @radware/f5-to-alteon ./extracted-qkview-dir/          # an extracted archive folder
-npx @radware/f5-to-alteon ./folder-of-qkviews/             # BULK: converts every archive inside
+npx @radware/f5-to-alteon backup.ucs                    # one UCS backup archive
+npx @radware/f5-to-alteon bigip_base.conf bigip.conf    # bare tmsh config files
+npx @radware/f5-to-alteon bigip.conf                    # a single bigip.conf
+npx @radware/f5-to-alteon ./qkview-dir/                 # an extracted archive folder
+npx @radware/f5-to-alteon .                             # BULK: every archive in this folder
+npx @radware/f5-to-alteon C:\configs\qkviews             # BULK: every archive in that folder
 ```
 
 **2. Global install** - same requirement, then the command is always available:

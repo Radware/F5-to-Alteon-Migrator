@@ -27,19 +27,20 @@ self-contained (~30 kB).
 The fastest way (no installation at all):
 
 ```bash
-npx @radware/f5-to-alteon <your-f5-file>
+npx @radware/f5-to-alteon device.qkview
 ```
 
-`<your-f5-file>` can be ANY form of F5 export - the input type is auto-detected,
-so every one of these works:
+The input type is auto-detected, so every one of these works. `.` means "the
+folder I am in right now" - use it to convert a whole folder of archives:
 
 ```bash
-npx @radware/f5-to-alteon device.qkview                 # qkview support archive
-npx @radware/f5-to-alteon backup.ucs                    # UCS backup archive
+npx @radware/f5-to-alteon device.qkview                 # one qkview support archive
+npx @radware/f5-to-alteon backup.ucs                    # one UCS backup archive
 npx @radware/f5-to-alteon bigip_base.conf bigip.conf    # bare tmsh config files
 npx @radware/f5-to-alteon bigip.conf                    # a single bigip.conf
-npx @radware/f5-to-alteon ./extracted-qkview-dir/       # extracted archive folder
-npx @radware/f5-to-alteon ./folder-of-qkviews/          # BULK: every archive inside
+npx @radware/f5-to-alteon ./qkview-dir/                 # an extracted archive folder
+npx @radware/f5-to-alteon .                             # BULK: every archive in this folder
+npx @radware/f5-to-alteon C:\configs\qkviews             # BULK: every archive in that folder
 ```
 
 No output path is needed: each device gets a folder named after its input,
@@ -49,7 +50,7 @@ Or install once, then use anywhere:
 
 ```bash
 npm install -g @radware/f5-to-alteon
-f5-to-alteon <your-f5-file>
+f5-to-alteon device.qkview
 ```
 
 Both work identically in Windows PowerShell / CMD, macOS Terminal, and any
@@ -67,7 +68,7 @@ auto-detects what you give it:
 | An extracted qkview/UCS folder | `f5-to-alteon ./extracted-dir/` |
 | Bare config files | `f5-to-alteon bigip_base.conf bigip.conf` |
 | A single bigip.conf | `f5-to-alteon bigip.conf` |
-| A folder holding many archives | `f5-to-alteon ./dump-folder/` (BULK: converts every device into its own folder) |
+| A folder holding many archives | `f5-to-alteon .` from inside it, or `f5-to-alteon <path>` (BULK: every device into its own folder) |
 
 Large archives are streamed - the config files inside are found in seconds
 without unpacking the whole archive to disk.
@@ -95,11 +96,11 @@ With route domains in split mode you also get one
 converts every one of them, each into its own output folder:
 
 ```bash
-f5-to-alteon ./all-my-qkviews/
+f5-to-alteon .            # or: f5-to-alteon C:\configs\qkviews
 ```
 
 ```
-all-my-qkviews/
+the-folder-you-ran-it-in/
   device-a.qkview
   device-b.qkview
   device-a/    <- alteon-config.txt, needs-manual-work.txt, not-supported.txt
