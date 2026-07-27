@@ -149,14 +149,18 @@ regression test with your fix.
 | [`ROADMAP-NEXT.md`](ROADMAP-NEXT.md) | What to build next, ranked by what real customer configs contain |
 | [`docs/`](docs/) | Proposal + progress reports + the customer User Guide |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to report issues and contribute fixes |
+| [`PUBLISHING.md`](PUBLISHING.md) | Two-repo workflow and the sanitized release procedure |
 | [`legacy-reference/`](legacy-reference/) | Read-only copy of the original tool |
 
 ## For maintainers
 
 - [`HANDOFF.md`](HANDOFF.md) - continue-from-here guide
 - [`LAB.md`](LAB.md) - lab topology and validation how-to
-- Publishing: `cd node && npm publish` (prepublishOnly runs the full test
-  suite; the tarball ships only `bin/`, `lib/`, `README.md`)
+- [`PUBLISHING.md`](PUBLISHING.md) - **the two-repo workflow**: development
+  happens in a private repo with the full history; this public repo receives
+  sanitized snapshots only, via `tools/publish-public.ps1` (scans for customer
+  names and secrets, runs the tests, pushes one squashed commit). A pre-push
+  hook blocks direct pushes to the public remote.
 
 ## License
 

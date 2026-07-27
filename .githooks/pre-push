@@ -1,0 +1,43 @@
+#!/bin/sh
+# Guard: never push the private development history to the PUBLIC repo.
+#
+# This repository has two remotes ON PURPOSE:
+#   origin   -> rdwr-seanr/F5-to-Alteon-Migrator  (PRIVATE: full dev history,
+#               customer names, lab details - keep it that way)
+#   radware  -> Radware/F5-to-Alteon-Migrator     (PUBLIC: sanitized snapshots)
+#
+# "git push radware main" would publish EVERY private commit. This hook blocks
+# any push to the public remote that did not come from tools/publish-public.ps1
+# (which sanitizes, tests, and pushes a single squashed snapshot).
+#
+# Enabled via: git config core.hooksPath .githooks
+
+remote_name="$1"
+remote_url="$2"
+
+case "$remote_url" in
+  *[Rr]adware/F5-to-Alteon-Migrator*) is_public=1 ;;
+  *) is_public=0 ;;
+esac
+
+[ "$is_public" = "1" ] || exit 0
+[ "$RADWARE_PUBLISH" = "1" ] && exit 0
+
+cat >&2 <<'EOF'
+
+  BLOCKED: direct push to the PUBLIC repo (Radware/F5-to-Alteon-Migrator).
+
+  Pushing this branch would publish the FULL private development history,
+  including customer names and lab details that live in the early commits.
+
+  To publish, run the release script instead - it scans for sensitive
+  content, runs the tests, and pushes a single sanitized snapshot:
+
+      pwsh tools/publish-public.ps1            # or: powershell -File tools\publish-public.ps1
+
+  Your day-to-day work is unaffected:
+
+      git push origin main                     # PRIVATE repo, full history
+
+EOF
+exit 1

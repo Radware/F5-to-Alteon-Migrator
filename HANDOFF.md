@@ -1,5 +1,14 @@
 # HANDOFF — read this first to continue the project
 
+> ## Two repos - read [PUBLISHING.md](PUBLISHING.md) before pushing
+>
+> `origin` = **private** (rdwr-seanr): full dev history, customer names, lab
+> credentials - commit freely, `git push origin main`.
+> `radware` = **public** (Radware/F5-to-Alteon-Migrator): sanitized snapshots
+> only, published **exclusively** via `pwsh tools/publish-public.ps1`.
+> A pre-push hook blocks direct pushes to the public remote. On a fresh clone
+> run `git config core.hooksPath .githooks` to enable it.
+
 This document lets a new engineer (or a new AI chat) pick up exactly where the
 last session finished. Everything needed is in this repo.
 
