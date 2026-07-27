@@ -25,6 +25,9 @@ class Context {
     this.rportByPool = new Map();
     this.longNames = new Map();
     this.counters = new Map();
+    this.addrLists = new Map();  // net address-list -> Alteon network class
+    this.tmc = new Map();        // ltm traffic-matching-criteria
+    this.usedNwclss = new Set(); // network classes actually referenced by output
     this.rdVlans = new Map();    // vlan name -> route-domain id (net route-domain)
     this.rdInfo = new Map();     // route-domain id -> description
     this.diagnostics = [];       // {sev, type, name, issue, detail}

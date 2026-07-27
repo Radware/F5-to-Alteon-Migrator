@@ -454,6 +454,66 @@ function parseProfiles(text, ctx) {
   }
 }
 
+// ---------- net address-list -> Alteon network class ----------
+// Verified live on 34.5.7:
+//   /c/slb/nwclss <id>            type address | ipver v4
+//   /c/slb/nwclss <id>/network N  net subnet <ip> <mask> include
+//                                 net range <from> <to> include
+// A filter can then match on the class: "sip <id>" (the filter menu documents
+// sip/dip as "IP address or network class").
+function parseAddressLists(text, ctx) {
+  for (const block of text.match(BLOCK('net address-list')) || []) {
+    const hdr = block.split('\n')[0];
+    const nm = splitName(hdr.replace('net address-list ', '').replace(' {', ''));
+    const entry = { name: nm.name, elements: [], description: '' };
+    const addrBlock = (block.match(/^ {4}addresses \{\n[\s\S]*?\n {4}\}/m) || [''])[0];
+    for (const raw of addrBlock.split('\n').slice(1, -1)) {
+      const t = raw.trim().replace(/\s*\{\s*\}$/, '');
+      if (!t) continue;
+      const [bare, rd] = t.split('%');
+      if (rd) entry.rd = rd;                       // RD suffix: flagged below
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(bare)) {
+        entry.elements.push({ kind: 'subnet', ip: bare, mask: '255.255.255.255' });
+      } else if (/^\d+\.\d+\.\d+\.\d+\/\d+$/.test(bare)) {
+        const [ip, p] = bare.split('/');
+        entry.elements.push({ kind: 'subnet', ip, mask: T.prefixToMask(p) });
+      } else if (bare) {
+        ctx.warnManual('Address list', nm.name, 'Address-list entry "' + t +
+          '" is not a plain IPv4 address or CIDR; add it to network class "' + nm.name + '" manually.');
+      }
+    }
+    const d = block.match(/^ {4}description (.*)$/m);
+    if (d) entry.description = d[1].replace(/^"|"$/g, '');
+    if (entry.rd) {
+      ctx.warnManual('Address list', nm.name, 'Address-list entries are in route domain ' + entry.rd +
+        '; the RD suffix was stripped for the Alteon network class - verify the class is used in the matching segment/instance.');
+    }
+    if (entry.elements.length) ctx.addrLists.set(nm.name, entry);
+  }
+}
+
+// ---------- ltm traffic-matching-criteria (source-match forwarding) ----------
+function parseTmc(text, ctx) {
+  for (const block of text.match(BLOCK('ltm traffic-matching-criteria')) || []) {
+    const hdr = block.split('\n')[0];
+    const nm = splitName(hdr.replace('ltm traffic-matching-criteria ', '').replace(' {', ''));
+    const get = (k) => {
+      const m = block.match(new RegExp('^ {4}' + k + ' (.*)$', 'm'));
+      return m ? m[1].trim() : null;
+    };
+    const listName = (v) => (v ? splitName(v).name : null);
+    ctx.tmc.set(nm.name, {
+      srcList: listName(get('source-address-list')),
+      dstList: listName(get('destination-address-list')),
+      srcInline: get('source-address-inline'),
+      dstInline: get('destination-address-inline'),
+      rd: listName(get('route-domain')),
+      srcPortList: listName(get('source-port-list')),
+      dstPortList: listName(get('destination-port-list')),
+    });
+  }
+}
+
 // ---------- ltm persistence ----------
 function parsePersist(text, ctx) {
   for (const block of text.match(BLOCK('ltm persistence')) || []) {
@@ -509,8 +569,15 @@ function parseVirts(text, ctx) {
         ctx.warnUnsupported('Virt', name, 'Vlan specific virt is not supported, please address manually:', vlanBlock);
       }
     };
-    if (/^ {4}traffic-matching-criteria /m.test(block)) {
-      ctx.warnUnsupported('Virt', name, 'Source-match forwarding virtual (traffic-matching-criteria) — no direct Alteon equivalent; consider a filter-based design manually (Phase 4).');
+    const tmcLine = block.match(/^ {4}traffic-matching-criteria (.*)$/m);
+    if (tmcLine) {
+      // Source-match forwarding virtual. Converted to an Alteon filter whose
+      // sip is a network class built from the F5 address-list (both verified
+      // live on 34.5.7). Marked wildcard so it takes the filter render path.
+      virt.tmc = splitName(tmcLine[1].trim()).name;
+      virt.wildcard = true;
+      if (virt.vip === undefined) virt.vip = '0.0.0.0';
+      if (virt.mask === undefined) virt.mask = '0.0.0.0';
     }
     if (snatBlock) {
       for (const raw of snatBlock.split('\n').slice(1, -1)) {
@@ -890,6 +957,8 @@ function parseAll(text, ctx) {
   parseSelfIps(text, ctx);
   parseProfiles(text, ctx);
   parsePersist(text, ctx);
+  parseAddressLists(text, ctx);   // network classes (referenced by filters)
+  parseTmc(text, ctx);            // source-match criteria (before virts)
   parseVirts(text, ctx);
   parseSystem(text, ctx);
   parseRoutes(text, ctx);

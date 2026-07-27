@@ -11,16 +11,24 @@ has been applied on a live Alteon and observed doing what it should.**
 
 ---
 
-## Tier 1 - Quick wins (days each, reuse machinery we already have)
+## Tier 1 - status after the 2026-07-27 device-validation pass
 
-| # | Capability | Seen in configs | Why it is cheap |
-|---|---|---|---|
-| 1.1 | **Source-match forwarding virtuals** (`traffic-matching-criteria` + `address-list`) to filters with source matching | 29 virtuals (12 at the telco alone) | The wildcard-to-filter engine already exists; this adds a source network class. Closes the largest remaining "manual" class for the telco. |
-| 1.2 | **Address/port lists to network classes** (`net address-list`, `net port-list`, `ltm data-group internal`) | 49 + 80 + 109 | Same nwclss renderer used for SNAT pools. Prerequisite for 1.1 and 3.2. |
-| 1.3 | **SSL persistence** (`ltm persistence ssl`) to `pbind sslid` | 12 | One table entry in the persistence mapper. |
-| 1.4 | **DNS monitors** to Alteon DNS health checks | 12 | One entry in the monitor table. |
-| 1.5 | **Standalone SNAT / snat-translation** objects to NAT filters | 13 + 273 | Filter renderer exists; only the object mapping is new. |
-| 1.6 | **VIP advertisement attributes** (`ltm virtual-address`: ARP, route-advertisement, traffic-group) | 937 | Parse and attach to the virt; today these attributes are dropped silently. |
+Everything below was decided **on the appliance**, not from documentation or
+assumption: each construct was probed with `apropos` and the CLI's own usage
+strings, then built, applied and read back on live 34.5.7.
+
+| # | Capability | Status |
+|---|---|---|
+| 1.1 | **Source-match forwarding virtuals** to filters matching a source **network class** | **DONE - live-validated** with a real customer config (see TMC-1 in DELTAS.md). 6 filters + their classes applied on the device; `filt cur` confirms `sip <class>`. |
+| 1.2 | **`net address-list` to network classes** | **DONE - live-validated** (same run). Exact element syntax `net subnet <ip> <mask> include` was found by probing; the first three guesses were rejected by the device. |
+| 1.3 | **SSL persistence** (`ltm persistence ssl`) | **DONE - and it turned out to be a silent-failure BUG**, not a new feature: the tool emitted `pbind ssl`, which the CLI accepts while doing nothing. Correct keyword is `pbind sslid`, valid only on SSL-terminating services (LIVE-22). |
+| 1.4 | **DNS monitors** to Alteon DNS health checks | **NOT DONE - partially proven.** `/c/slb/advhc/health <id> DNS` exists with `dns`/`protocol`/`dport`/`dest`/`inter`/`retry`/`restr`/`timeout` and a `domain` parameter. The mapping of F5's `qname`/`qtype`/`recv` onto those fields has **not** been validated, so nothing is emitted yet - the monitor still falls back with a diagnostic. |
+| 1.5 | **Standalone SNAT / snat-translation** to NAT filters | **NOT DONE - partially proven.** Filters do support NAT (`action allow\|deny\|redir\|nat\|monitor\|goto\|outbound-llb`, `nat source\|dest\|mcast`), but F5 standalone `ltm snat` semantics (which origins get translated to which address, and the return path) were not proven equivalent, so nothing is emitted. |
+| 1.6 | **VIP advertisement attributes** (`ltm virtual-address`) | **REJECTED - no Alteon equivalent.** `apropos advertise` returns nothing and `apropos arp` returns only `/stats/l3/arp`: there is no configuration surface for per-VIP ARP or route advertisement on this version. Converting these attributes would mean inventing behavior, so they stay unconverted. |
+
+**Rule applied throughout:** if the device could not demonstrate the same
+behavior the F5 had, the tool does not emit a line for it. A missing conversion
+with a clear diagnostic is always preferable to a plausible-looking one.
 
 ## Tier 2 - High value, well-defined (1-3 weeks each)
 

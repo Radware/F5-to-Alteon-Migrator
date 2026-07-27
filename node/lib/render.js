@@ -6,8 +6,36 @@
 // against the frozen legacy golden files.
 const T = require('./tables');
 
+// Alteon network-class IDs follow the same 32-char / ASCII rules as other IDs.
+function nwclssId(name) {
+  const clean = String(name).replace(/[^\w.-]/g, '_');
+  return clean.length > 32 ? clean.slice(0, 32) : clean;
+}
+
 function render(ctx) {
   let out = '';
+  // Network classes first: a filter's "sip <class>" needs the class to exist
+  // (same forward-reference rule that segments have). Which classes are needed
+  // is known up front from the source-match virtuals.
+  const needed = new Set();
+  for (const [, v] of ctx.virts || []) {
+    const t = v.tmc && ctx.tmc ? ctx.tmc.get(v.tmc) : null;
+    if (t && t.srcList && ctx.addrLists && ctx.addrLists.has(t.srcList)) needed.add(t.srcList);
+  }
+  for (const listName of needed) {
+    const list = ctx.addrLists.get(listName);
+    const id = nwclssId(listName);
+    if (id !== listName) {
+      ctx.warnManual('Network class', listName, 'Address-list name exceeds the 32-char Alteon ID limit or has invalid characters; network class created as "' + id + '".');
+    }
+    out += '/c/slb/nwclss ' + id + '\n    ipver v4\n    type address\n';
+    if (list.description) out += '    name "' + list.description.slice(0, 32) + '"\n';
+    let n = 0;
+    for (const el of list.elements) {
+      n += 1;
+      out += '/c/slb/nwclss ' + id + '/network ' + n + '\n    net subnet ' + el.ip + ' ' + el.mask + ' include\n';
+    }
+  }
   // network segments FIRST (live finding: a virt's "segment" classifier warns
   // "Invalid Segment id" if the segment is not defined yet — the segmentation
   // guide also orders segment definitions before everything else)
@@ -71,13 +99,33 @@ function render(ctx) {
     out += '/c/slb/filt ' + fid + '\n    ena\n    name "' + name.slice(0, 32) + '"\n    ipver v4\n';
     out += '    action ' + (isRedir ? 'redir' : 'allow') + '\n';
     if (v.proto && v.proto !== 'any') out += '    proto ' + v.proto + '\n';
-    if (v.source) {                        // "10.1.2.0/28" (RD suffix already possible)
+    // Source matching. A traffic-matching-criteria virtual matches a whole F5
+    // address-list, which becomes an Alteon network class referenced directly
+    // by sip (no smask then - verified live: "sip <class>" applies and the
+    // device reports the class as associated to the filter).
+    const tmc = v.tmc ? ctx.tmc.get(v.tmc) : null;
+    const srcClass = tmc && tmc.srcList && ctx.addrLists.has(tmc.srcList) ? tmc.srcList : null;
+    if (srcClass) {
+      out += '    sip ' + nwclssId(srcClass) + '\n';
+      ctx.usedNwclss.add(srcClass);
+    } else if (v.source) {                 // "10.1.2.0/28" (RD suffix already possible)
       let [sip, spfx] = v.source.split('/');
       if (sip.includes('%')) sip = sip.split('%')[0];
       const smask = T.prefixToMask(spfx);
       if (sip !== '0.0.0.0' && smask) out += '    sip ' + sip + '\n    smask ' + smask + '\n';
       else out += '    sip any\n    smask 0.0.0.0\n';
     } else out += '    sip any\n    smask 0.0.0.0\n';
+    if (tmc && tmc.srcList && !srcClass) {
+      ctx.warnManual('Filter', name, 'Source-match virtual references address-list "' + tmc.srcList +
+        '" which was not found in the input; filter emitted with "sip any" - add the network class and set sip manually!');
+    }
+    if (tmc && tmc.dstList) {
+      ctx.warnManual('Filter', name, 'Source-match virtual also restricts the DESTINATION by address-list "' +
+        tmc.dstList + '"; only the source list was converted - set "dip <network class>" manually.');
+    }
+    if (tmc && (tmc.srcPortList || tmc.dstPortList)) {
+      ctx.warnManual('Filter', name, 'Source-match virtual uses a port-list; Alteon filters take a single port or range - configure sport/dport manually.');
+    }
     if (v.vip && v.vip !== '0.0.0.0') {
       out += '    dip ' + v.vip + '\n    dmask ' + (v.mask || '255.255.255.255') + '\n';
     } else out += '    dip any\n    dmask 0.0.0.0\n';
@@ -182,8 +230,20 @@ function render(ctx) {
           out += '    pbind cookie ' + method + ' ' + cname + '\n';
           ctx.warnManual('Virt', name, 'Cookie persistence: Alteon defaults the inserted-cookie expiry to 10 days; adjust via the service pbind menu if the F5 used a different lifetime.');
         }
-      } else if (v.persist.type === 'clientip' || v.persist.type === 'ssl') {
-        out += '    pbind ' + v.persist.type + '\n    ptmout ' + (v.persist.timeout || '10') + '\n';
+      } else if (v.persist.type === 'ssl') {
+        // LIVE-22 (verified live on 34.5.7): the keyword is "sslid", not "ssl".
+        // "pbind ssl" is accepted by the parser but silently does NOTHING -
+        // the mode stays "disabled" - so the virtual lost persistence without
+        // any error. Valid only on SSL-terminating services (an http service
+        // offers "clientip|cookie|disable" only).
+        if (['https', 'ssl'].includes(v.aplic)) {
+          out += '    pbind sslid\n    ptmout ' + (v.persist.timeout || '10') + '\n';
+        } else {
+          ctx.warnManual('Virt', name, 'SSL session-ID persistence needs an SSL-terminating service; this service is "' +
+            v.aplic + '", where Alteon offers only clientip/cookie. Persistence omitted - review stickiness manually!');
+        }
+      } else if (v.persist.type === 'clientip') {
+        out += '    pbind clientip\n    ptmout ' + (v.persist.timeout || '10') + '\n';
       }
     }
     if (v.pip) {

@@ -725,18 +725,96 @@ net self /Common/s1 {
   assert.ok(res.diagnostics.filter(d => d.issue.includes('RD suffix stripped')).length === 2);
 });
 
-test('LIVE-17b: traffic-matching-criteria virtuals get a targeted diagnostic', () => {
-  const conf = `ltm virtual /Common/fwd_vs {
+test('TMC-1: source-match forwarding virtual + address-list becomes a network class the filter matches on (live-validated)', () => {
+  const conf = `net address-list /Common/Inside_ESA-EDN {
+    addresses {
+        10.41.232.194 { }
+        10.41.232.197 { }
+    }
+    description "Inside ESA EDN Interface IPs"
+}
+ltm traffic-matching-criteria /Common/fwd_TMC_OBJ {
+    destination-address-inline 0.0.0.0
+    source-address-inline 0.0.0.0
+    source-address-list /Common/Inside_ESA-EDN
+}
+ltm virtual /Common/fwd_vs {
     ip-forward
     profiles {
         /Common/fastL4 { }
     }
-    traffic-matching-criteria /Common/some_TMC_OBJ
+    traffic-matching-criteria /Common/fwd_TMC_OBJ
     translate-address disabled
+    translate-port disabled
 }
 `;
   const res = migrate([conf]);
-  assert.ok(res.diagnostics.some(d => d.issue.includes('traffic-matching-criteria')));
+  // network class, exactly as the device accepted it
+  assert.match(res.output, /\/c\/slb\/nwclss Inside_ESA-EDN\n {4}ipver v4\n {4}type address\n/);
+  assert.match(res.output, /\/c\/slb\/nwclss Inside_ESA-EDN\/network 1\n {4}net subnet 10\.41\.232\.194 255\.255\.255\.255 include\n/);
+  assert.match(res.output, /\/c\/slb\/nwclss Inside_ESA-EDN\/network 2\n {4}net subnet 10\.41\.232\.197 255\.255\.255\.255 include\n/);
+  // filter matches source by the class - and no smask when a class is used
+  assert.match(res.output, /\/c\/slb\/filt \d+\n(?:.*\n)*? {4}sip Inside_ESA-EDN\n/);
+  assert.doesNotMatch(res.output, /sip Inside_ESA-EDN\n {4}smask/);
+  // the class must be defined before the filter that references it
+  assert.ok(res.output.indexOf('/c/slb/nwclss Inside_ESA-EDN') < res.output.indexOf('sip Inside_ESA-EDN'));
+});
+
+test('TMC-2: CIDR entries, and a missing address-list falls back to sip any with a diagnostic', () => {
+  const conf = `net address-list /Common/Nets {
+    addresses {
+        10.99.0.0/16 { }
+    }
+}
+ltm traffic-matching-criteria /Common/t1 {
+    source-address-list /Common/Nets
+}
+ltm traffic-matching-criteria /Common/t2 {
+    source-address-list /Common/DoesNotExist
+}
+ltm virtual /Common/v1 {
+    ip-forward
+    traffic-matching-criteria /Common/t1
+}
+ltm virtual /Common/v2 {
+    ip-forward
+    traffic-matching-criteria /Common/t2
+}
+`;
+  const res = migrate([conf]);
+  assert.match(res.output, /net subnet 10\.99\.0\.0 255\.255\.0\.0 include/);
+  assert.match(res.output, / {4}sip any\n {4}smask 0\.0\.0\.0\n/);
+  assert.ok(res.diagnostics.some(d => d.issue.includes('was not found in the input')));
+});
+
+test('LIVE-22: SSL persistence emits "pbind sslid" (not "ssl", which the device silently ignores) and only on SSL services', () => {
+  const mk = (port, profile) => `ltm persistence ssl /Common/ssl_persist {
+    timeout 1800
+}
+ltm virtual /Common/v_${port} {
+    destination /Common/1.2.3.4:${port}
+    mask 255.255.255.255
+    persist {
+        /Common/ssl_persist {
+            default yes
+        }
+    }
+    pool /Common/p1
+    profiles {
+        ${profile}
+    }
+}
+ltm pool /Common/p1 {
+    members {
+        /Common/n1:${port} {
+            address 1.2.3.10
+        }
+    }
+}
+`;
+  const ssl = migrate([mk('443', '/Common/clientssl { context clientside }')]);
+  assert.match(ssl.output, / {4}pbind sslid\n {4}ptmout 30\n/);
+  assert.doesNotMatch(ssl.output, /pbind ssl\n/);
 });
 
 const MULTI_RD_CONF = `net route-domain /Common/0 {
