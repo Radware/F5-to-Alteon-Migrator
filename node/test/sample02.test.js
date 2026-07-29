@@ -25,9 +25,11 @@ test('sample02 conversion carries the behaviorally-relevant constructs', () => {
   assert.match(res.output, /health mon_web/);
   assert.match(res.output, /pbind cookie insert "RDWRLAB"\n/);   // LIVE-8: no trailing "10 10"
   assert.match(res.output, /\/c\/slb\/virt vs_web_tls\/service 443 https\/ssl\/sslpol vs_web_tls/);
-  // SNAT automap converts to pip mode egress, one summary diagnostic per device
-  assert.match(res.output, /pip\n {4}mode egress/);
-  const auto = res.diagnostics.find(d => d.issue.includes('service(s) converted to "pip mode egress"'));
+  // sample02 has NO floating self-IPs -> automap is PUT ASIDE, not half-emitted
+  // (pip mode egress without a Proxy IP applies cleanly but silently does not
+  // NAT - verified live), and the log carries the full manual recipe
+  assert.doesNotMatch(res.output, /pip\n {4}mode egress/);
+  const auto = res.diagnostics.find(d => d.issue.includes('SNAT Automap'));
   assert.ok(auto, 'expected the automap summary diagnostic');
-  assert.ok(/FILLED AUTOMATICALLY|REQUIRED/.test(auto.issue), 'diagnostic must state the PIP-table outcome');
+  assert.ok(auto.issue.includes('NOTHING was emitted'), 'automap without a usable IP must be put aside');
 });

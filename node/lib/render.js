@@ -36,10 +36,17 @@ function render(ctx) {
         [...floatByVlan].map(([v, a]) => a + ' on VLAN ' + v).join(', ') + ') - the same NAT source addresses F5 automap used, so downstream firewall rules keep matching. ' +
         'Verified live on a standalone device (float-as-PIP applies and NATs correctly). For an Alteon HA pair, review: the float also serves HA - consider peerpip / a dedicated PIP per unit.');
     } else {
-      ctx.warnManual('Virt', 'SNAT Automap', 'SNAT Automap: ' + automapVirts.length + ' service(s) converted to "pip mode egress", but the config has NO floating self-IPs to reuse as the Proxy IP. ' +
-        'REQUIRED step (the converter cannot pick a free IP for you): "/c/slb/pip/type vlan" then "/c/slb/pip/add <free-IP> <server-side-VLAN-id>" per server-facing VLAN. ' +
-        'Without these entries the service does NOT source-NAT and one-armed topologies time out (verified live). ' +
-        'Alternative if servers must see real client IPs: remove the pip block and use Return-to-Last-Hop ("rtsrcmac ena") - different behavior (no NAT).');
+      // No float to reuse -> the config cannot be made complete automatically.
+      // "pip mode egress" with an empty PIP table APPLIES CLEANLY but silently
+      // does not NAT (verified live: one-armed traffic times out) - the worst
+      // failure mode. Per the project rule, an incomplete construct is PUT
+      // ASIDE, not half-emitted: strip the pip block and leave the whole step
+      // in the log.
+      for (const v of automapVirts) v.pip = null;
+      ctx.warnManual('Virt', 'SNAT Automap', 'SNAT Automap: ' + automapVirts.length + ' service(s) used it, but the config has NO floating self-IP that Alteon can reuse as the Proxy IP ' +
+        '(the interface IP is refused by the device: "conflicts with the Client NAT"). NOTHING was emitted for it - emitting "pip mode egress" without a Proxy IP would apply cleanly yet silently NOT translate (verified live). ' +
+        'To restore automap behavior once you have ONE free IP per server-side VLAN: "/c/slb/pip/type vlan", "/c/slb/pip/add <free-IP> <vlan-id>", then per service "/c/slb/virt <virt>/service <port> <app>/pip/mode egress". ' +
+        'Alternative if servers must see real client IPs: Return-to-Last-Hop ("rtsrcmac ena") - different behavior (no NAT).');
     }
   }
   // Network classes first: a filter's "sip <class>" needs the class to exist

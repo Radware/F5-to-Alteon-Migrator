@@ -806,25 +806,15 @@ ltm pool /Common/p1 {
 }
 `;
   const res = migrate([conf]);
-  assert.match(res.output, /\/c\/slb\/virt v1\/service 80 http\/pip\n {4}mode egress\n/);
-  // no floats in this config -> the REQUIRED free-IP warning
-  const d = res.diagnostics.find(x => x.issue.includes('pip mode egress'));
-  assert.ok(d, 'expected the automap conversion diagnostic');
-  assert.ok(d.issue.includes('REQUIRED'), 'diagnostic must mark the PIP-table step as REQUIRED');
-  assert.ok(d.issue.includes('/c/slb/pip/add'), 'diagnostic must quote the exact companion commands');
-  assert.ok(d.issue.includes('rtsrcmac'), 'diagnostic must mention the no-NAT alternative');
+  // no floats -> NOTHING emitted (a pip block without a Proxy IP applies
+  // cleanly but silently does not NAT - verified live); whole step in the log
+  assert.doesNotMatch(res.output, /pip\n {4}mode egress/, 'no pip block without an IP to use');
   assert.doesNotMatch(res.output, /\/c\/slb\/pip\n/, 'no PIP table without a float to reuse');
-  // persistence ordering (LIVE-19) must still hold: pbind before the pip block
-  const conf2 = conf.replace('    source-address-translation {', `    persist {
-        /Common/cookie {
-            default yes
-        }
-    }
-    source-address-translation {`);
-  const res2 = migrate([conf2]);
-  const pbindAt = res2.output.indexOf('pbind cookie');
-  const pipAt = res2.output.indexOf('/pip\n    mode egress');
-  assert.ok(pbindAt > -1 && pipAt > -1 && pbindAt < pipAt, 'pbind must come before the pip block');
+  const d = res.diagnostics.find(x => x.issue.includes('SNAT Automap'));
+  assert.ok(d, 'expected the automap diagnostic');
+  assert.ok(d.issue.includes('NOTHING was emitted'), 'diagnostic must state the construct was put aside');
+  assert.ok(d.issue.includes('/c/slb/pip/add'), 'diagnostic must quote the exact commands to finish manually');
+  assert.ok(d.issue.includes('rtsrcmac'), 'diagnostic must mention the no-NAT alternative');
 });
 
 test('AUTOMAP-2: with floating self-IPs, the PIP table is auto-filled from them (float-as-PIP verified live)', () => {
@@ -868,6 +858,21 @@ ltm pool /Common/p1 {
   assert.ok(d, 'expected the auto-filled informational diagnostic');
   assert.ok(d.issue.includes('10.7.7.4'), 'diagnostic names the reused float IP');
   assert.ok(d.issue.includes('HA'), 'diagnostic flags the HA review point');
+  // LIVE-19 ordering must hold in the emitted (float) case: pbind before /pip
+  const conf2 = conf.replace(`    source-address-translation {
+        type automap
+    }`, `    persist {
+        /Common/cookie {
+            default yes
+        }
+    }
+    source-address-translation {
+        type automap
+    }`);
+  const res2 = migrate([conf2]);
+  const pbindAt = res2.output.indexOf('pbind cookie');
+  const pipAt = res2.output.indexOf('/pip\n    mode egress');
+  assert.ok(pbindAt > -1 && pipAt > -1 && pbindAt < pipAt, 'pbind must come before the pip block');
 });
 
 test('LIVE-22: SSL persistence emits "pbind sslid" (not "ssl", which the device silently ignores) and only on SSL services', () => {
