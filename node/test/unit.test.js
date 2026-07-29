@@ -807,11 +807,13 @@ ltm pool /Common/p1 {
 `;
   const res = migrate([conf]);
   assert.match(res.output, /\/c\/slb\/virt v1\/service 80 http\/pip\n {4}mode egress\n/);
+  // no floats in this config -> the REQUIRED free-IP warning
   const d = res.diagnostics.find(x => x.issue.includes('pip mode egress'));
   assert.ok(d, 'expected the automap conversion diagnostic');
   assert.ok(d.issue.includes('REQUIRED'), 'diagnostic must mark the PIP-table step as REQUIRED');
   assert.ok(d.issue.includes('/c/slb/pip/add'), 'diagnostic must quote the exact companion commands');
   assert.ok(d.issue.includes('rtsrcmac'), 'diagnostic must mention the no-NAT alternative');
+  assert.doesNotMatch(res.output, /\/c\/slb\/pip\n/, 'no PIP table without a float to reuse');
   // persistence ordering (LIVE-19) must still hold: pbind before the pip block
   const conf2 = conf.replace('    source-address-translation {', `    persist {
         /Common/cookie {
@@ -823,6 +825,49 @@ ltm pool /Common/p1 {
   const pbindAt = res2.output.indexOf('pbind cookie');
   const pipAt = res2.output.indexOf('/pip\n    mode egress');
   assert.ok(pbindAt > -1 && pipAt > -1 && pbindAt < pipAt, 'pbind must come before the pip block');
+});
+
+test('AUTOMAP-2: with floating self-IPs, the PIP table is auto-filled from them (float-as-PIP verified live)', () => {
+  const conf = `net vlan /Common/v10 {
+    tag 10
+    interfaces {
+        1.1 { }
+    }
+}
+net self /Common/self_local {
+    address 10.7.7.5/24
+    vlan /Common/v10
+}
+net self /Common/self_float {
+    address 10.7.7.4/24
+    floating enabled
+    traffic-group /Common/traffic-group-1
+    vlan /Common/v10
+}
+ltm virtual /Common/v1 {
+    destination /Common/10.7.7.100:80
+    ip-protocol tcp
+    mask 255.255.255.255
+    pool /Common/p1
+    source-address-translation {
+        type automap
+    }
+}
+ltm pool /Common/p1 {
+    members {
+        /Common/n1:80 {
+            address 10.7.7.10
+        }
+    }
+}
+`;
+  const res = migrate([conf]);
+  assert.match(res.output, /\/c\/slb\/pip\n {4}type vlan\n\/c\/slb\/pip\/add 10\.7\.7\.4 10\n/);
+  assert.match(res.output, /\/c\/slb\/virt v1\/service 80 http\/pip\n {4}mode egress\n/);
+  const d = res.diagnostics.find(x => x.issue.includes('FILLED AUTOMATICALLY'));
+  assert.ok(d, 'expected the auto-filled informational diagnostic');
+  assert.ok(d.issue.includes('10.7.7.4'), 'diagnostic names the reused float IP');
+  assert.ok(d.issue.includes('HA'), 'diagnostic flags the HA review point');
 });
 
 test('LIVE-22: SSL persistence emits "pbind sslid" (not "ssl", which the device silently ignores) and only on SSL services', () => {

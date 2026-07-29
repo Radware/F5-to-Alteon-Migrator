@@ -14,6 +14,34 @@ function nwclssId(name) {
 
 function render(ctx) {
   let out = '';
+  // SNAT Automap support (AUTOMAP-1, all verified live on 34.5.7 with traffic):
+  // each automap service got "pip mode egress"; egress mode draws its NAT
+  // address from the per-VLAN Proxy IP table. F5 automap NATs from the
+  // FLOATING self-IP - and the device accepts exactly that float as a PIP
+  // (while it REFUSES the interface IP: "The IP Address of Interface N
+  // conflicts with the Client NAT"). So when the config has floats, the PIP
+  // table is filled from them - same NAT source the servers and firewalls
+  // already know from the F5. Without floats a free IP is required and only
+  // the engineer can pick one.
+  const automapVirts = [...ctx.virts.values()].filter((v) => v.automap);
+  if (automapVirts.length) {
+    const floatByVlan = new Map();
+    for (const [, f] of ctx.floats) {
+      if (f.addr && f.vlanTag && !floatByVlan.has(f.vlanTag)) floatByVlan.set(f.vlanTag, f.addr);
+    }
+    if (floatByVlan.size) {
+      out += '/c/slb/pip\n    type vlan\n';
+      for (const [vlan, addr] of floatByVlan) out += '/c/slb/pip/add ' + addr + ' ' + vlan + '\n';
+      ctx.warnManual('Virt', 'SNAT Automap', 'SNAT Automap: ' + automapVirts.length + ' service(s) converted to "pip mode egress", and the Proxy IP table was FILLED AUTOMATICALLY from the F5 floating self-IPs (' +
+        [...floatByVlan].map(([v, a]) => a + ' on VLAN ' + v).join(', ') + ') - the same NAT source addresses F5 automap used, so downstream firewall rules keep matching. ' +
+        'Verified live on a standalone device (float-as-PIP applies and NATs correctly). For an Alteon HA pair, review: the float also serves HA - consider peerpip / a dedicated PIP per unit.');
+    } else {
+      ctx.warnManual('Virt', 'SNAT Automap', 'SNAT Automap: ' + automapVirts.length + ' service(s) converted to "pip mode egress", but the config has NO floating self-IPs to reuse as the Proxy IP. ' +
+        'REQUIRED step (the converter cannot pick a free IP for you): "/c/slb/pip/type vlan" then "/c/slb/pip/add <free-IP> <server-side-VLAN-id>" per server-facing VLAN. ' +
+        'Without these entries the service does NOT source-NAT and one-armed topologies time out (verified live). ' +
+        'Alternative if servers must see real client IPs: remove the pip block and use Return-to-Last-Hop ("rtsrcmac ena") - different behavior (no NAT).');
+    }
+  }
   // Network classes first: a filter's "sip <class>" needs the class to exist
   // (same forward-reference rule that segments have). Which classes are needed
   // is known up front from the source-match virtuals.

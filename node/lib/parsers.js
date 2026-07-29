@@ -592,11 +592,7 @@ function parseVirts(text, ctx) {
           // mode egress and an empty PIP table, the service does not NAT and
           // one-armed traffic times out.
           virt.pip = new Map([['mode', 'egress']]);
-          ctx.warnManual('Virt', name, 'SNAT Automap converted to "pip mode egress". ' +
-            'REQUIRED companion step (the converter cannot pick a free IP for you): define the Proxy IP the egress mode will use - ' +
-            '"/c/slb/pip/type vlan" then "/c/slb/pip/add <free-IP> <server-side-VLAN-id>" (one entry per server-facing VLAN). ' +
-            'Without these entries the service does NOT source-NAT and one-armed topologies time out (verified live). ' +
-            'Alternative if the servers must see real client IPs: remove the pip block and use Return-to-Last-Hop ("rtsrcmac ena") instead - different behavior (no NAT), review before choosing.');
+          virt.automap = true;   // render fills the PIP table (floats) or warns
         } else if (line.startsWith('pool ')) {
           let pn = splitName(line.slice(5)).name;
           if (pn.length > 32) {          // live finding: nwclss IDs max 32 chars

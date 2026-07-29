@@ -251,9 +251,21 @@ suggestions have different semantics, so the device decided:
 - `rtsrcmac` is a no-NAT alternative (servers keep seeing real client IPs);
   it is offered in the diagnostic, not silently substituted.
 
-The prospect's actual qkview now converts with 14 egress-pip services + the
-warning per virtual; the generated config was staged non-destructively on the
-lab device. 85 regression tests.
+Follow-up (same day, after Sean asked "doesn't the F5 config provide the
+IP?") - it does, and the device decided which of them Alteon can reuse:
+
+- The device REFUSES its own interface IP as PIP ("The IP Address of
+  Interface 1 conflicts with the Client NAT") - F5's self-IP sharing does not
+  exist on Alteon.
+- The FLOATING self-IP IS accepted as PIP and NATs correctly under traffic
+  (backend saw CLIENT-SEEN-BY-BACKEND=<float-IP>) - the exact address F5
+  automap prefers. The converter now fills the PIP table from the config's
+  floats automatically (per VLAN, per RD split); only float-less configs keep
+  the REQUIRED free-IP warning.
+
+The prospect's actual qkview now converts with 14 egress-pip services, the
+PIP table generated from its two floating self-IPs, and the generated config
+staged non-destructively on the lab device. 86 regression tests.
 
 ## Harness & safety
 
