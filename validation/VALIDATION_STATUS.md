@@ -233,6 +233,28 @@ uses chassis ports 30/50 which do not exist on a 2-port lab VA, so the port
 bindings cannot apply there. The network classes and filters themselves applied
 and verified correctly.
 
+## Round 10 (2026-07-29): SNAT Automap -> pip mode egress (field request, traffic-proven)
+
+A partner testing against a prospect's config (18/18 virtuals on SNAT Automap)
+asked for automatic conversion to "rtsrcmac or pip mode egress". The two
+suggestions have different semantics, so the device decided:
+
+- `pip mode egress` EXISTS (`mode [disable|ingress|egress|address|nwclss]`)
+  and, **combined with a per-VLAN Proxy IP** (`/c/slb/pip/type vlan` +
+  `add <free-IP> <vlan>`), reproduces automap's data plane exactly: the
+  client-echo backend reported `CLIENT-SEEN-BY-BACKEND=<PIP>` and the
+  one-armed return path worked.
+- **Trap proven:** `pip mode egress` with an empty PIP table does NOT NAT -
+  traffic times out. So the conversion emits the mode AND a REQUIRED-companion
+  diagnostic quoting the exact PIP-table commands; a free IP cannot be
+  invented by a converter.
+- `rtsrcmac` is a no-NAT alternative (servers keep seeing real client IPs);
+  it is offered in the diagnostic, not silently substituted.
+
+The prospect's actual qkview now converts with 14 egress-pip services + the
+warning per virtual; the generated config was staged non-destructively on the
+lab device. 85 regression tests.
+
 ## Harness & safety
 
 Use **`validate3.js`** (`validate.js`/`validate2.js` kept for reference only —

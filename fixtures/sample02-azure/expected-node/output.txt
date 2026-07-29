@@ -44,6 +44,8 @@ Connection:Close\r\n
 /c/slb/virt vs_api/service 8081 http
     group pool_api
     rport 8080
+/c/slb/virt vs_api/service 8081 http/pip
+    mode egress
 /c/slb/virt vs_web
     ena
     ipver v4
@@ -52,6 +54,8 @@ Connection:Close\r\n
     group pool_web
     rport 8080
     pbind cookie insert "RDWRLAB"
+/c/slb/virt vs_web/service 80 http/pip
+    mode egress
 /c/slb/virt vs_web_tls
     ena
     ipver v4
@@ -60,6 +64,8 @@ Connection:Close\r\n
     group pool_web
     rport 8080
     pbind cookie insert "RDWRLAB"
+/c/slb/virt vs_web_tls/service 443 https/pip
+    mode egress
 /c/slb/ssl/sslpol vs_web_tls/fessl e/convert d/backend/ssl d
 /c/slb/virt vs_web_tls/service 443 https/ssl/sslpol vs_web_tls
 /c/sys

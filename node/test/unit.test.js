@@ -787,6 +787,44 @@ ltm virtual /Common/v2 {
   assert.ok(res.diagnostics.some(d => d.issue.includes('was not found in the input')));
 });
 
+test('AUTOMAP-1: SNAT automap becomes "pip mode egress" with the REQUIRED PIP-table companion flagged (live-validated)', () => {
+  const conf = `ltm virtual /Common/v1 {
+    destination /Common/1.2.3.4:80
+    ip-protocol tcp
+    mask 255.255.255.255
+    pool /Common/p1
+    source-address-translation {
+        type automap
+    }
+}
+ltm pool /Common/p1 {
+    members {
+        /Common/n1:80 {
+            address 1.2.3.10
+        }
+    }
+}
+`;
+  const res = migrate([conf]);
+  assert.match(res.output, /\/c\/slb\/virt v1\/service 80 http\/pip\n {4}mode egress\n/);
+  const d = res.diagnostics.find(x => x.issue.includes('pip mode egress'));
+  assert.ok(d, 'expected the automap conversion diagnostic');
+  assert.ok(d.issue.includes('REQUIRED'), 'diagnostic must mark the PIP-table step as REQUIRED');
+  assert.ok(d.issue.includes('/c/slb/pip/add'), 'diagnostic must quote the exact companion commands');
+  assert.ok(d.issue.includes('rtsrcmac'), 'diagnostic must mention the no-NAT alternative');
+  // persistence ordering (LIVE-19) must still hold: pbind before the pip block
+  const conf2 = conf.replace('    source-address-translation {', `    persist {
+        /Common/cookie {
+            default yes
+        }
+    }
+    source-address-translation {`);
+  const res2 = migrate([conf2]);
+  const pbindAt = res2.output.indexOf('pbind cookie');
+  const pipAt = res2.output.indexOf('/pip\n    mode egress');
+  assert.ok(pbindAt > -1 && pipAt > -1 && pbindAt < pipAt, 'pbind must come before the pip block');
+});
+
 test('LIVE-22: SSL persistence emits "pbind sslid" (not "ssl", which the device silently ignores) and only on SSL services', () => {
   const mk = (port, profile) => `ltm persistence ssl /Common/ssl_persist {
     timeout 1800

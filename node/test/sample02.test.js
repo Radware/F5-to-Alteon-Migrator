@@ -25,6 +25,6 @@ test('sample02 conversion carries the behaviorally-relevant constructs', () => {
   assert.match(res.output, /health mon_web/);
   assert.match(res.output, /pbind cookie insert "RDWRLAB"\n/);   // LIVE-8: no trailing "10 10"
   assert.match(res.output, /\/c\/slb\/virt vs_web_tls\/service 443 https\/ssl\/sslpol vs_web_tls/);
-  // SNAT automap must be flagged, not silently dropped
-  assert.ok(res.diagnostics.filter(d => d.issue.includes('SNAT Automap')).length >= 3);
+  // SNAT automap converts to pip mode egress WITH the required-companion flag
+  assert.ok(res.diagnostics.filter(d => d.issue.includes('SNAT Automap converted to "pip mode egress"')).length >= 3);
 });

@@ -151,7 +151,7 @@ function render(ctx) {
       ctx.warnManual('Filter', name, 'Filter ' + fid + ' (from wildcard virtual ' + name +
         ') is NOT bound to any port — no VLAN restriction was present to derive ports from. Bind it to the ingress ports manually (/c/slb/port <p>/filt ena + add ' + fid + ') or it matches nothing!');
     }
-    if (v.pip) ctx.warnManual('Filter', name, 'Wildcard virtual used a SNAT pool; filter-based NAT is not converted automatically — configure the filter NAT/proxy IP manually!');
+    if (v.pip) ctx.warnManual('Filter', name, 'Wildcard virtual used SNAT (pool or automap); filter-based NAT is not converted automatically — configure the filter NAT/proxy IP manually!');
     if (v.persist) ctx.warnManual('Filter', name, 'Persistence on a wildcard virtual is not carried to the filter — review stickiness requirements manually!');
     if (ctx.segments && v.rd && v.rd !== '0') ctx.warnManual('Filter', name, 'Wildcard virtual belongs to route domain ' + v.rd +
       ' (a segment); the filter matches by VLAN instead of a segment binding (a segment supports only ONE associated filter — its gateway redirect). Verify interaction with the segment redirect filter!');
