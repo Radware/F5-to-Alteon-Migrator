@@ -127,13 +127,14 @@ function writeResult(res, dir, label) {
 }
 
 async function convertOne(inputs, dir, label) {
-  const texts = [];
+  const texts = [], partitions = [];
   for (const f of inputs) {
     const resolved = await resolveInput(f);
     for (const s of resolved) texts.push(s.text);
+    for (const p of resolved.partitions || []) if (!partitions.includes(p)) partitions.push(p);
     for (const n of resolved.notes || []) console.log('  NOTE: ' + n);
   }
-  const res = migrate(texts, { rdMode });
+  const res = migrate(texts, { rdMode, partitions });
   if (res.objectCount === 0) throw new Error('no F5 configuration objects found');
   return writeResult(res, dir, label);
 }
@@ -161,9 +162,13 @@ async function convertOne(inputs, dir, label) {
 
   // ---- single device (one or more files belonging to it) ----
   if (toStdout) {
-    const texts = [];
-    for (const f of files) for (const s of await resolveInput(f)) texts.push(s.text);
-    const res = migrate(texts, { rdMode });
+    const texts = [], partitions = [];
+    for (const f of files) {
+      const resolved = await resolveInput(f);
+      for (const s of resolved) texts.push(s.text);
+      for (const p of resolved.partitions || []) if (!partitions.includes(p)) partitions.push(p);
+    }
+    const res = migrate(texts, { rdMode, partitions });
     if (res.objectCount === 0) { console.error('error: no F5 configuration objects found in the input.'); process.exit(1); }
     process.stdout.write(res.output);
     process.exit(0);

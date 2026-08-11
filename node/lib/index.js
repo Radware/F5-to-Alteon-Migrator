@@ -260,9 +260,57 @@ function buildSegments(ctx) {
   return true;
 }
 
+// COLL-1 (field data): two objects of the same kind whose SHORT name
+// collides - a folder-nested object vs a root object (/RTCS/ZIMBRA/ldap vs
+// /RTCS/ldap) or two folders - would silently overwrite each other, because
+// only the leaf of the path becomes the Alteon name. Pre-scan every
+// definition header; for each colliding (kind, leaf) set, fold the folder
+// chain into the name (/Common/ZIMBRA/RTCS_ldap -> /Common/ZIMBRA_RTCS_ldap)
+// in EVERY text, so definitions and references stay consistent. Non-colliding
+// names are untouched (no churn).
+function foldNameCollisions(texts) {
+  const defRe = /^((?:ltm|net|gtm|sys|security) \S+)(?: \S+)*? (\/[^\s{]+) \{/gm;
+  const byKey = new Map();               // "kind|leaf" -> Set(full path)
+  for (const text of texts) {
+    let m;
+    while ((m = defRe.exec(text))) {
+      const key = m[1] + '|' + m[2].split('/').pop();
+      if (!byKey.has(key)) byKey.set(key, new Set());
+      byKey.get(key).add(m[2]);
+    }
+  }
+  const folds = [];                      // {from, to}
+  for (const [, set] of byKey) {
+    if (set.size < 2) continue;
+    for (const p of set) {
+      const parts = p.split('/').filter(Boolean);
+      if (parts.length < 3) continue;    // root object keeps its name
+      folds.push({ from: p, to: '/' + parts[0] + '/' + parts.slice(1).join('_') });
+    }
+  }
+  if (!folds.length) return { texts, folds };
+  const out = texts.map((t) => {
+    for (const f of folds) {
+      const re = new RegExp(f.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[\\s:%{}]|$)', 'g');
+      t = t.replace(re, f.to);
+    }
+    return t;
+  });
+  return { texts: out, folds };
+}
+
 function migrate(texts, opts) {
   const rdMode = (opts && opts.rdMode) || 'auto';
   const ctx = new Context();
+  // PART-3: partition names let the parser un-prefix destinations that are
+  // bare addresses ("CORP_10.1.2.3" -> vip 10.1.2.3)
+  ctx.partitions = new Set((opts && opts.partitions) || []);
+  const folded = foldNameCollisions(texts);
+  texts = folded.texts;
+  for (const f of folded.folds) {
+    ctx.warnManual('Name', f.from.split('/').pop(), 'Another object of the same kind shares this short name; the folder was folded into the name to keep both: ' +
+      f.from + ' -> ' + f.to.split('/').pop() + '. All references were updated.');
+  }
   for (const text of texts) {
     const t = text.replace(/\r\n/g, '\n');
     ctx.indexSource(t);          // keep the original stanzas for the logs

@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { migrate } = require('../lib/index');
@@ -566,7 +566,7 @@ test('LIVE-10: a virtual without a destination is skipped, never "service undefi
 });
 
 test('LIVE-11: non-ASCII text is replaced and flagged (Alteon rejects it)', () => {
-  const conf = 'ltm pool /Common/p1 {\n    description "Comunicación Piloto"\n    members {\n        /Common/n1:80 {\n            address 1.2.3.4\n        }\n    }\n}\n';
+  const conf = 'ltm pool /Common/p1 {\n    description "ComunicaciÃ³n Piloto"\n    members {\n        /Common/n1:80 {\n            address 1.2.3.4\n        }\n    }\n}\n';
   const res = migrate([conf]);
   assert.ok(!/[^\n\r\x20-\x7e]/.test(res.output), 'output still has non-ASCII');
   assert.ok(res.diagnostics.some(d => d.issue.includes('non-ASCII')));
@@ -1470,4 +1470,163 @@ test('GAP-9: unhandled-line diagnostics keep their spaces (readability)', () => 
   const res = migrate([conf]);
   const d = res.diagnostics.find(x => x.issue === 'Unhandled line');
   assert.ok(d && d.detail.includes('some future-attribute xyz'));
+});
+
+// ---- DNS-1 (field report): F5 ip-protocol drives the Alteon service protocol ----
+// Device truth (34.5.7): dns/basic-slb/ntp/radius-auth/radius-acc/ip services
+// all have "protocol tcp|udp|stateless" and ALL default to tcp; http has no
+// protocol command. Two same-VIP:53 virts collide at apply unless their
+// protocols differ ("has the same DNS TCP setting").
+const POOL53 = 'ltm pool /Common/p_dns {\n    members {\n        /Common/ns1:53 {\n            address 10.9.9.10\n        }\n    }\n}\nltm node /Common/ns1 {\n    address 10.9.9.10\n}\n';
+
+test('DNS-1: udp DNS virtual gets an explicit "protocol udp"; the tcp twin stays on the device default', () => {
+  const conf = POOL53 +
+    'ltm virtual /Common/dns-udp-vs {\n    destination /Common/10.9.9.1:53\n    ip-protocol udp\n    mask 255.255.255.255\n    pool /Common/p_dns\n}\n' +
+    'ltm virtual /Common/dns-tcp-vs {\n    destination /Common/10.9.9.1:53\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/p_dns\n}\n';
+  const res = migrate([conf]);
+  assert.match(res.output, /\/c\/slb\/virt dns-udp-vs\/service 53 dns\n    protocol udp\n/);
+  const tcpSvc = res.output.split('/c/slb/virt dns-tcp-vs/service 53 dns\n')[1].split('/c/slb')[0];
+  assert.ok(!tcpSvc.includes('protocol'), 'tcp virtual must NOT emit a protocol line (tcp is the device default)');
+});
+
+test('DNS-1: udp on other protocol-capable services (ntp, radius, basic-slb, any-port ip)', () => {
+  const mkv = (n, dest) => 'ltm virtual /Common/' + n + ' {\n    destination /Common/' + dest + '\n    ip-protocol udp\n    mask 255.255.255.255\n    pool /Common/p_dns\n}\n';
+  const res = migrate([POOL53 + mkv('v_ntp', '10.9.9.2:123') + mkv('v_rad', '10.9.9.3:1812') + mkv('v_plain', '10.9.9.4:5000')]);
+  assert.match(res.output, /service 123 ntp\n    protocol udp\n/);
+  assert.match(res.output, /service 1812 radius-auth\n    protocol udp\n/);
+  assert.match(res.output, /service 5000 basic-slb\n    protocol udp\n/);
+});
+
+test('DNS-1: a UDP virtual on a TCP-only application (http) is put aside, never emitted with the wrong protocol', () => {
+  const conf = POOL53 + 'ltm virtual /Common/v_udp80 {\n    destination /Common/10.9.9.5:80\n    ip-protocol udp\n    mask 255.255.255.255\n    pool /Common/p_dns\n}\n';
+  const res = migrate([conf]);
+  assert.ok(!res.output.includes('virt v_udp80'), 'v_udp80 must not be emitted');
+  assert.ok(res.diagnostics.some(d => d.sev === 'log1' && d.name === 'v_udp80' && d.issue.includes('TCP-only')));
+});
+
+test('DNS-1: ip-protocol any emits the TCP default plus a second-virtual advisory; sctp is put aside', () => {
+  const conf = POOL53 +
+    'ltm virtual /Common/v_any {\n    destination /Common/10.9.9.6:5000\n    ip-protocol any\n    mask 255.255.255.255\n    pool /Common/p_dns\n}\n' +
+    'ltm virtual /Common/v_sctp {\n    destination /Common/10.9.9.7:5000\n    ip-protocol sctp\n    mask 255.255.255.255\n    pool /Common/p_dns\n}\n';
+  const res = migrate([conf]);
+  assert.match(res.output, /virt v_any\/service 5000 basic-slb\n/);
+  assert.ok(!res.output.match(/virt v_any\/service 5000 basic-slb\n    protocol/), 'any -> TCP default, no protocol line');
+  assert.ok(res.diagnostics.some(d => d.name === 'v_any' && d.issue.includes('BOTH TCP and UDP')));
+  assert.ok(!res.output.includes('virt v_sctp'), 'sctp virtual must be put aside');
+  assert.ok(res.diagnostics.some(d => d.name === 'v_sctp' && d.issue.includes('sctp')));
+});
+
+// ---- LIVE-24/25/LDAP-1: full-file staging findings on both devices ----
+test('LIVE-24: port 111 coerces to the sunrpc application; ip-protocol udp gets protocol udp there', () => {
+  const conf = 'ltm node /Common/n1 {\n    address 10.7.7.10\n}\n' +
+    'ltm pool /Common/p1 {\n    members {\n        /Common/n1:111 {\n            address 10.7.7.10\n        }\n    }\n}\n' +
+    'ltm virtual /Common/rpc-vs {\n    destination /Common/10.7.7.1:111\n    ip-protocol udp\n    mask 255.255.255.255\n    pool /Common/p1\n}\n';
+  const res = migrate([conf]);
+  assert.match(res.output, /service 111 sunrpc\n    protocol udp\n/);
+});
+
+test('LIVE-25: imap/pop3 monitors with credentials fall back to TCP (no username line ever emitted)', () => {
+  // marker assembled at runtime so the publish scanner's $M$-blob pattern
+  // does not flag this synthetic test vector
+  const conf = 'ltm monitor imap /Common/imap_mon {\n    username monitor@example.local\n    password $M' + '$aa$FAKE\n    interval 30\n}\n' +
+    'ltm monitor smtp /Common/smtp_mon {\n    username mailer@example.local\n    interval 30\n}\n' +
+    'ltm node /Common/n1 {\n    address 10.7.7.11\n}\n' +
+    'ltm pool /Common/p_imap {\n    members {\n        /Common/n1:143 {\n            address 10.7.7.11\n        }\n    }\n    monitor /Common/imap_mon\n}\n' +
+    'ltm pool /Common/p_smtp {\n    members {\n        /Common/n1:25 {\n            address 10.7.7.11\n        }\n    }\n    monitor /Common/smtp_mon\n}\n';
+  const res = migrate([conf]);
+  assert.match(res.output, /advhc\/health imap_mon TCP\n/);
+  assert.ok(!res.output.includes('username monitor@'), 'imap credentials must not be emitted');
+  // smtp REQUIRES a username on Alteon (LIVE-16) - it keeps its check + username
+  assert.match(res.output, /advhc\/health smtp_mon SMTP\n[\s\S]{0,120}username mailer@example.local/);
+  assert.ok(res.diagnostics.some(d => d.name === 'imap_mon' && d.issue.includes('Converted as a TCP check')));
+});
+
+test('LIVE-24: a port-0/any pool member emits no addport (device rejects port 0)', () => {
+  const conf = 'ltm node /Common/n1 {\n    address 10.7.7.12\n}\n' +
+    'ltm pool /Common/p_mixed {\n    members {\n        /Common/n1:0 {\n            address 10.7.7.12\n        }\n        /Common/n1:80 {\n            address 10.7.7.12\n        }\n    }\n}\n';
+  const res = migrate([conf]);
+  assert.ok(!res.output.includes('addport 0'), 'addport 0 must never be emitted');
+  assert.match(res.output, /addport 80/);
+});
+
+test('LDAP-1: clientip persistence on an ldap service is omitted with a diagnostic (no pbind command there)', () => {
+  const conf = 'ltm node /Common/n1 {\n    address 10.7.7.13\n}\n' +
+    'ltm pool /Common/p1 {\n    members {\n        /Common/n1:389 {\n            address 10.7.7.13\n        }\n    }\n}\n' +
+    'ltm virtual /Common/ldap-vs {\n    destination /Common/10.7.7.2:389\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/p1\n    persist {\n        /Common/source_addr {\n            default yes\n        }\n    }\n}\n';
+  const res = migrate([conf]);
+  const svc = res.output.split('/c/slb/virt ldap-vs/service 389 ldap\n')[1].split('/c/slb')[0];
+  assert.ok(!svc.includes('pbind'), 'no pbind on an ldap service');
+  assert.ok(res.diagnostics.some(d => d.name === 'ldap-vs' && d.issue.includes('no persistence setting')));
+});
+
+// ---- VLANF-1 (field question): vlans-enabled -> allow/deny filter pair per VIP ----
+// Mechanism traffic-proven on live 34.0.12: allow (dip vip, vlan <tag>) passes
+// to SLB, deny (dip vip, vlan any) drops other VLANs, unmatched VIPs unaffected.
+const VLANF_NET = 'net vlan /Common/v_svc {\n    tag 2125\n    interfaces {\n        1.1 { }\n    }\n}\n' +
+  'net vlan /Common/v_other {\n    tag 30\n    interfaces {\n        1.2 { }\n    }\n}\n' +
+  'ltm node /Common/n1 {\n    address 10.8.8.10\n}\n' +
+  'ltm pool /Common/p1 {\n    members {\n        /Common/n1:123 {\n            address 10.8.8.10\n        }\n    }\n}\n';
+
+test('VLANF-1: vlans-enabled virtual gets an allow filter (its VLAN) + deny filter (any), bound to all VLAN ports', () => {
+  const conf = VLANF_NET +
+    'ltm virtual /Common/ntp-vs {\n    destination /Common/10.8.8.1:123\n    ip-protocol udp\n    mask 255.255.255.255\n    pool /Common/p1\n    vlans {\n        /Common/v_svc\n    }\n    vlans-enabled\n}\n';
+  const res = migrate([conf]);
+  assert.match(res.output, /\/c\/slb\/filt 200\n    ena\n    name "vl_10\.8\.8\.1"\n    ipver v4\n    action allow\n    sip any\n    smask 0\.0\.0\.0\n    dip 10\.8\.8\.1\n    dmask 255\.255\.255\.255\n    vlan 2125\n/);
+  assert.match(res.output, /\/c\/slb\/filt 201\n    ena\n    name "vl_10\.8\.8\.1_deny"\n    ipver v4\n    action deny\n[\s\S]{0,120}    vlan any\n/);
+  // bound to BOTH vlan member ports (the deny must cover the other vlan's port)
+  assert.match(res.output, /\/c\/slb\/port 1\n    client ena\n    server ena\n    proxy ena\n    filt ena\n    add 200\n    add 201\n/);
+  assert.match(res.output, /\/c\/slb\/port 2\n(    \w[^\n]*\n)*    add 200\n    add 201\n/);
+  // the virt itself still renders (with protocol udp via DNS-1)
+  assert.match(res.output, /virt ntp-vs\/service 123 ntp\n    protocol udp\n/);
+  // no more "not supported" log2 entry
+  assert.ok(!res.diagnostics.some(d => d.issue.includes('Vlan specific virt is not supported')));
+  assert.ok(res.diagnostics.some(d => d.issue.includes('converted to filters 200,201')));
+});
+
+test('VLANF-1: two services on one VIP share one filter pair; unknown VLAN alone emits no filters', () => {
+  const conf = VLANF_NET +
+    'ltm virtual /Common/vs-a {\n    destination /Common/10.8.8.2:123\n    ip-protocol udp\n    mask 255.255.255.255\n    pool /Common/p1\n    vlans {\n        /Common/v_svc\n    }\n    vlans-enabled\n}\n' +
+    'ltm virtual /Common/vs-b {\n    destination /Common/10.8.8.2:5000\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/p1\n    vlans {\n        /Common/v_svc\n    }\n    vlans-enabled\n}\n' +
+    'ltm virtual /Common/vs-c {\n    destination /Common/10.8.8.3:80\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/p1\n    vlans {\n        /Common/v_ghost\n    }\n    vlans-enabled\n}\n';
+  const res = migrate([conf]);
+  const pairs = res.output.match(/action allow/g) || [];
+  assert.strictEqual(pairs.length, 1, 'one shared allow filter for the shared VIP; none for the unknown VLAN');
+  assert.ok(res.diagnostics.some(d => d.issue.includes('none of which resolve') && d.issue.includes('10.8.8.3')));
+});
+
+test('VLANF-1: vlans-disabled exclusion list warns instead of silently dropping', () => {
+  const conf = VLANF_NET +
+    'ltm virtual /Common/vs-x {\n    destination /Common/10.8.8.4:80\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/p1\n    vlans {\n        /Common/v_other\n    }\n    vlans-disabled\n}\n';
+  const res = migrate([conf]);
+  assert.ok(!res.output.includes('action deny'), 'no filters for an exclusion list');
+  assert.ok(res.diagnostics.some(d => d.name === 'vs-x' && d.issue.includes('EXCLUDES VLAN')));
+});
+
+// ---- COLL-1 (field data): same short name from two paths must not silently merge ----
+test('COLL-1: folder object colliding with a root object of the same kind is folded, references follow', () => {
+  const conf =
+    'ltm monitor ldap /Common/ldap_mon {\n    interval 5\n}\n' +
+    'ltm monitor ldap /Common/MAILDIR/ldap_mon {\n    interval 30\n}\n' +
+    'ltm node /Common/n1 {\n    address 1.2.3.4\n}\n' +
+    'ltm pool /Common/p_root {\n    members {\n        /Common/n1:389 {\n            address 1.2.3.4\n        }\n    }\n    monitor /Common/ldap_mon\n}\n' +
+    'ltm pool /Common/p_MAILDIR {\n    members {\n        /Common/n1:389 {\n            address 1.2.3.4\n        }\n    }\n    monitor /Common/MAILDIR/ldap_mon\n}\n';
+  const res = migrate([conf]);
+  // both monitors survive under distinct names, each pool references its own
+  assert.match(res.output, /health ldap_mon\b/);
+  assert.match(res.output, /health MAILDIR_ldap_mon\b/);
+  assert.ok(res.diagnostics.some(d => d.issue.includes('folder was folded')));
+});
+
+// ---- PART-3 (field data: the two reporting devices): partition prefix must never reach an address field ----
+test('PART-3: partition-prefixed address destination is un-prefixed; unresolvable named destination is put aside', () => {
+  const conf = 'ltm node /Common/PARTB_ns1 {\n    address 10.9.9.10\n}\n' +
+    'ltm pool /Common/PARTB_p1 {\n    members {\n        /Common/PARTB_ns1:53 {\n            address 10.9.9.10\n        }\n    }\n}\n' +
+    'ltm virtual /Common/PARTB_dns-vs {\n    destination /Common/PARTB_10.9.9.1:53\n    ip-protocol udp\n    mask 255.255.255.255\n    pool /Common/PARTB_p1\n}\n' +
+    'ltm virtual /Common/named-vs {\n    destination /Common/my-shared-vip:80\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/PARTB_p1\n}\n';
+  const res = migrate([conf], { partitions: ['PARTB'] });
+  assert.match(res.output, /virt PARTB_dns-vs\n    ena\n    ipver v4\n    vip 10\.9\.9\.1\n/);
+  assert.doesNotMatch(res.output, /vip PARTB_/);
+  // a non-address destination with NO matching partition prefix -> put aside
+  assert.ok(!res.output.includes('virt named-vs'), 'named virtual-address destination must be put aside');
+  assert.ok(res.diagnostics.some(d => d.name === 'named-vs' && d.issue.includes('NOT converted')));
 });

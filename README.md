@@ -82,12 +82,14 @@ guidance. With route domains in **split** mode you also get one
 
 | Area | Coverage |
 |------|----------|
-| SLB | nodes/reals (state, ratio -> weight, maxcon), monitors (built-ins + custom, AND/OR -> LOGEXP), pools/groups (metric, priority-group -> backup), virtuals (VIP/service, reserved-port coercion), persistence (client-IP, cookie), profiles (HTTP/XFF, SSL -> ssl policy, one-connect), SNAT pools -> PIP network classes |
+| SLB | nodes/reals (state, ratio -> weight, maxcon), monitors (built-ins + custom, AND/OR -> LOGEXP), pools/groups (metric, priority-group -> backup), virtuals (VIP/service, reserved-port coercion, tcp/udp protocol from `ip-protocol`), persistence (client-IP, cookie, SSL session-ID), profiles (HTTP/XFF, SSL -> ssl policy, one-connect), SNAT pools -> PIP network classes, SNAT Automap -> `pip mode egress` (Proxy IPs auto-filled from floating self-IPs) |
+| VLAN-restricted virtuals | F5 `vlans-enabled` -> an allow/deny **filter pair** per VIP (traffic-proven), bound to the VLAN member ports |
 | Wildcard / forwarding virtuals | -> Alteon **filters** (allow or redirect-to-group) with automatic port bindings |
+| Administrative partitions | converted alongside /Common - each partition's objects are prefixed (`CORP_...`), partition route domains included |
 | Route domains | -> Alteon **Network Segmentation** on one device (non-overlapping RDs), or per-RD split outputs (`--rd-mode`) |
 | Network | VLANs, self-IPs -> interfaces, floating IPs, static routes + gateways, trunks/LACP |
 | System | mgmt IP/gw, NTP, syslog, SNMP |
-| iRules, GTM/GSLB, partitions | named diagnostics with guidance (no automatic equivalent) |
+| iRules, GTM/GSLB | named diagnostics with guidance (no automatic equivalent) |
 
 The tool is a strict **superset of the legacy F5-Migration tool** - every
 legacy conversion path is covered, byte-compatible except a documented list of

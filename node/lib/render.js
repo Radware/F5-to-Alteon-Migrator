@@ -34,7 +34,8 @@ function render(ctx) {
       for (const [vlan, addr] of floatByVlan) out += '/c/slb/pip/add ' + addr + ' ' + vlan + '\n';
       ctx.warnManual('Virt', 'SNAT Automap', 'SNAT Automap: ' + automapVirts.length + ' service(s) converted to "pip mode egress", and the Proxy IP table was FILLED AUTOMATICALLY from the F5 floating self-IPs (' +
         [...floatByVlan].map(([v, a]) => a + ' on VLAN ' + v).join(', ') + ') - the same NAT source addresses F5 automap used, so downstream firewall rules keep matching. ' +
-        'Verified live on a standalone device (float-as-PIP applies and NATs correctly). For an Alteon HA pair, review: the float also serves HA - consider peerpip / a dedicated PIP per unit.');
+        'Verified live on a standalone device (float-as-PIP applies and NATs correctly). For an Alteon HA pair, review: the float also serves HA - consider peerpip / a dedicated PIP per unit. ' +
+        'NOTE for 34.0.x targets (found live on 34.0.12): the device validates "pip/add <ip> <vlan>" against the CURRENT pip base type, not the pending one - paste "/c/slb/pip/type vlan", APPLY, and only then paste the pip add lines (34.4+ accepts the whole block in one paste).');
     } else {
       // No float to reuse -> the config cannot be made complete automatically.
       // "pip mode egress" with an empty PIP table APPLIES CLEANLY but silently
@@ -193,8 +194,22 @@ function render(ctx) {
     ctx.warnManual('Virt', name, 'Wildcard virtual converted to filter ' + fid + ' (' + (isRedir ? 'redirect to group ' + v.service.get('group') : 'allow/forward') + '). Review the filter and its port bindings!');
   };
   // virts
-  const HARD_RESERVED = { '21': 'ftp', '22': 'ssh', '25': 'smtp', '53': 'dns', '110': 'pop3', '123': 'ntp',
-    '143': 'imap', '389': 'ldap', '1812': 'radius-auth', '1813': 'radius-acc' };   // LIVE-18 + pop3/imap (live-confirmed 110)
+  const HARD_RESERVED = { '21': 'ftp', '22': 'ssh', '25': 'smtp', '53': 'dns', '110': 'pop3', '111': 'sunrpc', '123': 'ntp',
+    '143': 'imap', '389': 'ldap', '1812': 'radius-auth', '1813': 'radius-acc' };   // LIVE-18 + pop3/imap (live-confirmed 110) + sunrpc (live-confirmed 111 on 34.0.12)
+  // VLANF-1 (field question): F5 "vlans-enabled" means the virtual listens
+  // ONLY on the listed VLANs. Collected here per VIP, emitted as a filter
+  // pair after the virt loop (see the emission block for the traffic proof).
+  const vlanRestricted = new Map();      // vip -> {vlans:Set, names:[], lists:[]}
+  // DNS-1 (field report): every protocol-capable Alteon virt service defaults
+  // to TCP - verified live on 34.5.7, where dns, basic-slb, ntp, radius-auth,
+  // radius-acc and ip ALL answer "Current protocol: tcp" - so the tcp/udp
+  // pair of F5 DNS virtuals collided at apply ("Virtual server X has the
+  // same DNS TCP setting as virtual server Y") and every F5 UDP listener
+  // came out TCP-only. F5 "ip-protocol udp" now emits an explicit
+  // "protocol udp"; a UDP virtual whose port maps to a TCP-only application
+  // (http, https, ftp, ...: no protocol command on those services) is put
+  // aside instead of emitting a listener with the wrong protocol.
+  const PROTO_CAPABLE = new Set(['ip', 'basic-slb', 'dns', 'ntp', 'radius-auth', 'radius-acc', 'sunrpc']);   // sunrpc: protocol cmd + tcp default verified live on 34.0.12
   // live finding (agg008, 1649 pools): the lab VA refuses group #1025
   if (ctx.pools.size > 1024) {
     ctx.warnManual('Group', 'capacity', 'Config defines ' + ctx.pools.size + ' groups; the Alteon VA used for validation caps at 1024 Real Server Groups — verify the target platform capacity or split the config!');
@@ -220,6 +235,26 @@ function render(ctx) {
       ctx.warnManual('Virt', name, 'Port ' + v.dport + ' is reserved for the ' + HARD_RESERVED[v.dport] + ' application on Alteon; service emitted as ' + HARD_RESERVED[v.dport] + '. Verify!');
       v.aplic = HARD_RESERVED[v.dport];
     }
+    if (v.proto === 'udp' && !PROTO_CAPABLE.has(v.aplic)) {
+      ctx.warnManual('Virt', name, 'F5 restricts this virtual to UDP, but its port/profiles map to the Alteon "' + v.aplic +
+        '" application, which is TCP-only (no protocol setting on that service; verified live). NOT converted (put aside) - address manually!');
+      continue;
+    }
+    if (v.proto && !['tcp', 'udp'].includes(v.proto)) {
+      if (v.proto === 'any') {
+        ctx.warnManual('Virt', name, 'F5 allows BOTH TCP and UDP on this virtual (ip-protocol any); the Alteon service was emitted with its TCP default - if UDP must also be balanced, add a second virtual on the same vip with "protocol udp"!');
+      } else {
+        ctx.warnManual('Virt', name, 'F5 ip-protocol "' + v.proto + '" cannot be expressed on an Alteon virt service (protocol is tcp/udp/stateless). NOT converted (put aside) - address manually!');
+        continue;
+      }
+    }
+    if (v.vlanList && v.vlanList.length) {
+      if (!vlanRestricted.has(v.vip)) vlanRestricted.set(v.vip, { vlans: new Set(), names: [], lists: [] });
+      const g = vlanRestricted.get(v.vip);
+      for (const vn of v.vlanList) g.vlans.add(vn);
+      g.names.push(name);
+      g.lists.push(v.vlanList.join(','));
+    }
     out += '/c/slb/virt ' + name + '\n    ena\n    ipver v4\n    vip ' + v.vip + '\n';
     if (v.disable) out += '    dis\n';   // live finding: the config keyword is "dis", not "disable"
     if (v.vname) out += '    vname ' + v.vname + '\n';
@@ -232,6 +267,7 @@ function render(ctx) {
       out += '    segment "' + v.rd + '"\n    rtsrcmac ena\n';
     }
     out += '/c/slb/virt ' + name + '/service ' + v.dport + ' ' + v.aplic + '\n';
+    if (v.proto === 'udp') out += '    protocol udp\n';   // DNS-1: TCP is the device default
     for (const [k, val] of v.service) out += '    ' + k + ' ' + val + '\n';
     // LIVE-19: persistence (pbind/ptmout) must be emitted INSIDE the service
     // menu — i.e. BEFORE the /pip block switches the CLI into the pip submenu
@@ -278,7 +314,14 @@ function render(ctx) {
             v.aplic + '", where Alteon offers only clientip/cookie. Persistence omitted - review stickiness manually!');
         }
       } else if (v.persist.type === 'clientip') {
-        out += '    pbind clientip\n    ptmout ' + (v.persist.timeout || '10') + '\n';
+        if (v.aplic === 'ldap') {
+          // LDAP-1 (full-file staging, confirmed on BOTH 34.5.7 and 34.0.12):
+          // the ldap virt service has NO pbind command at all - emitting it
+          // cascades "unknown command" into the following lines
+          ctx.warnManual('Virt', name, 'F5 uses source-address persistence on this LDAP virtual, but the Alteon "ldap" service type has no persistence setting (verified on 34.5.7 and 34.0.12). Persistence omitted - review stickiness requirements manually!');
+        } else {
+          out += '    pbind clientip\n    ptmout ' + (v.persist.timeout || '10') + '\n';
+        }
       }
     }
     if (v.pip) {
@@ -294,6 +337,64 @@ function render(ctx) {
       out += '/c/slb/ssl/sslpol ' + n32 + '/fessl ' + fe + '/convert d/backend/ssl ' + be +
         '\n/c/slb/virt ' + name + '/service ' + v.dport + ' ' + v.aplic + '/ssl/sslpol ' + n32 + '\n';
     }
+  }
+  // VLANF-1 emission: F5 "vlans-enabled" -> one ALLOW filter per listed VLAN
+  // (dip = the VIP, vlan <tag>) plus one DENY filter (dip = the VIP,
+  // vlan any), bound to every known VLAN member port. TRAFFIC-PROVEN on live
+  // 34.0.12: with the pair applied, the VIP answered from the allowed VLAN,
+  // timed out from another VLAN, and an unrestricted control VIP on the same
+  // ports stayed reachable from BOTH VLANs throughout (filters are
+  // first-match by ascending ID; unmatched traffic proceeds normally - no
+  // implicit deny). Filter IDs 200-989, below the wildcard-filter range.
+  let vfId = 200;
+  const vfPortAdds = new Map();          // port -> [filter ids]
+  const vfAllPorts = new Set();
+  for (const [, vl] of ctx.vlans) {
+    if (vl.invalid) continue;
+    for (const p of vl.interfaces) if (/^\d+$/.test(String(p))) vfAllPorts.add(p);
+  }
+  for (const [vip, g] of vlanRestricted) {
+    const tags = [], missing = [];
+    for (const vn of g.vlans) {
+      const vl = ctx.vlans.get(vn);
+      if (vl && !vl.invalid && vl.tag) tags.push(vl.tag);
+      else missing.push(vn);
+    }
+    if (!tags.length) {
+      ctx.warnManual('Virt', g.names.join(', '), 'F5 restricts this VIP (' + vip + ') to VLAN(s) "' + [...g.vlans].join(', ') +
+        '", none of which resolve to a VLAN in the input; NO filters were emitted - the VIP listens on ALL VLANs. Restrict manually if required!');
+      continue;
+    }
+    if (vfId + tags.length + 1 > 989) {
+      ctx.warnManual('Filter', vip, 'VLAN-restriction filter ID budget exhausted (IDs 200-989); the remaining restricted VIPs listen on ALL VLANs - restrict manually!');
+      break;
+    }
+    const ids = [];
+    for (const tag of tags) {
+      out += '\n/c/slb/filt ' + vfId + '\n    ena\n    name "vl_' + vip + '"\n    ipver v4\n    action allow\n' +
+        '    sip any\n    smask 0.0.0.0\n    dip ' + vip + '\n    dmask 255.255.255.255\n    vlan ' + tag + '\n';
+      ids.push(vfId); vfId += 1;
+    }
+    out += '\n/c/slb/filt ' + vfId + '\n    ena\n    name "vl_' + vip + '_deny"\n    ipver v4\n    action deny\n' +
+      '    sip any\n    smask 0.0.0.0\n    dip ' + vip + '\n    dmask 255.255.255.255\n    vlan any\n';
+    ids.push(vfId); vfId += 1;
+    for (const p of vfAllPorts) {
+      if (!vfPortAdds.has(p)) vfPortAdds.set(p, []);
+      vfPortAdds.get(p).push(...ids);
+    }
+    ctx.warnManual('Virt', g.names.join(', '), 'F5 VLAN restriction on VIP ' + vip + ' converted to filters ' + ids.join(',') +
+      ' (allow VLAN ' + tags.join(',') + ' + deny elsewhere), bound to port(s) ' + ([...vfAllPorts].join(',') || 'NONE') +
+      '. Traffic-proven mechanism; verify the port bindings match where client traffic really enters.' +
+      (missing.length ? ' VLAN(s) "' + missing.join(', ') + '" were NOT found in the input and are not allowed through - verify!' : '') +
+      (new Set(g.lists).size > 1 ? ' NOTE: services on this VIP had DIFFERENT F5 VLAN lists; the UNION is allowed for all of them - tighten per-service (dport) manually if needed.' : '') +
+      (ctx.segments ? ' NOTE: segment mode is active on this output; the segment redirect filters (1800+) evaluate AFTER these - verify the interaction.' : ''));
+  }
+  if (vfPortAdds.size && !vfAllPorts.size) {
+    ctx.warnManual('Filter', 'vlan-restriction', 'VLAN-restriction filters were emitted but no VLAN member ports are known; bind them manually (/c/slb/port <p>/filt ena + add <ids>)!');
+  }
+  for (const [p, ids] of vfPortAdds) {
+    out += '\n/c/slb/port ' + p + '\n    client ena\n    server ena\n    proxy ena\n    filt ena\n';
+    for (const id of ids) out += '    add ' + id + '\n';
   }
   // vlans (legacy quirk: newline-prefixed segments, no trailing newline).
   // "ena" is REQUIRED: a newly created Alteon VLAN is disabled by default and

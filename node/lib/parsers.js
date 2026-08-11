@@ -259,6 +259,21 @@ function parseMonitors(text, ctx) {
           'Converted as a TCP check so healthy servers are not marked down by 401 responses. To restore the authenticated check on the Alteon: ' +
           '/c/slb/advhc/health ' + name + ' HTTP/http/auth basic ' + user + ' <password>  (ntlm2/ntlmssp also available).');
       }
+    } else if (hc.advtype.has('username') && hc.hcType !== 'smtp') {
+      // LIVE-25 (full-file staging): "username" is ALSO rejected on the
+      // imap/pop3 advhc menus (unlike smtp, which REQUIRES it - LIVE-16),
+      // and no credential mapping is proven for the remaining monitor
+      // types. Same rule as LIVE-23: never emit an unproven credential
+      // line - fall back to TCP with a diagnostic.
+      const user = hc.advtype.get('username');
+      const prevType = hc.hcType;
+      hc.hcType = 'tcp';
+      hc.advtype.clear();
+      hc.attrs.delete('ssl');
+      hc.attrs.delete('cipher');
+      ctx.warnManual('Health Check', name, 'The F5 ' + prevType + ' monitor authenticates as "' + user +
+        '"; the password is stored encrypted and the Alteon ' + prevType + ' health check has no verified username/password commands. ' +
+        'Converted as a TCP check - recreate the authenticated ' + prevType + ' check manually if login-level monitoring is required.');
     } else if (hc.advtype.has('password')) {
       hc.advtype.delete('password');   // never emit a credential line blindly
     }
@@ -396,7 +411,12 @@ function parsePools(text, ctx) {
         const renamed = n + '_' + p;
         if (ctx.reals.has(n) && !ctx.reals.has(renamed)) {
           const clone = { name: renamed, attrs: new Map(ctx.reals.get(n).attrs), disabled: ctx.reals.get(n).disabled };
-          clone.attrs.set('addport', p);
+          // an F5 ":0"/":any" member has no fixed port - Alteon rejects
+          // "addport 0" ("bad Real service port 0; must be between 5 and
+          // 65534", found by the full-file staging); the real then serves
+          // whatever rport the virt service sets, which is the F5 behavior
+          if (p && p !== '0') clone.attrs.set('addport', p);
+          else ctx.warnManual('Group', name, 'Member ' + n + ' uses port 0/any; no addport was emitted (Alteon rejects port 0) - the real answers on the service rport. Verify!');
           ctx.reals.set(renamed, clone);
         }
         members.set(renamed, members.get(key)); members.delete(key);
@@ -611,9 +631,15 @@ function parseVirts(text, ctx) {
       ctx.warnManual('Virt', name, 'iRules are attached; not converted automatically. Please address manually!',
         rulesBlock);
     }
+    // VLANF-1: "vlans-enabled" lists are CONVERTED (render emits an
+    // allow-VLAN/deny-elsewhere filter pair per VIP - traffic-proven).
+    // A "vlans-disabled" EXCLUSION list (listen everywhere except...) is not
+    // converted: warn instead of the old silent drop.
     const warnVlanRestriction = () => {
-      if (vlanBlock && !block.includes('vlans-disabled') && !virt.wildcard) {
-        ctx.warnUnsupported('Virt', name, 'Vlan specific virt is not supported, please address manually:', vlanBlock);
+      if (vlanBlock && block.includes('vlans-disabled') && !virt.wildcard &&
+          (virt.vlanListDisabled || []).length) {
+        ctx.warnManual('Virt', name, 'F5 EXCLUDES VLAN(s) ' + virt.vlanListDisabled.join(', ') +
+          ' (vlans-disabled list); not converted - the virtual listens on all VLANs. Add per-VLAN deny filters manually if the exclusion matters!', vlanBlock);
       }
     };
     const tmcLine = block.match(/^ {4}traffic-matching-criteria (.*)$/m);
@@ -655,9 +681,11 @@ function parseVirts(text, ctx) {
     let delVirt = false, dport = null;
     // vlan restriction list (used for wildcard->filter vlan matching and
     // filter port bindings)
-    if (vlanBlock && !block.includes('vlans-disabled')) {
-      virt.vlanList = vlanBlock.split('\n').map((l) => l.trim()).filter((l) => l && l !== 'vlans {' && l !== '}' && !l.startsWith('vlans-'))
+    if (vlanBlock) {
+      const list = vlanBlock.split('\n').map((l) => l.trim()).filter((l) => l && l !== 'vlans {' && l !== '}' && !l.startsWith('vlans-'))
         .map((l) => splitName(l).name);
+      if (block.includes('vlans-disabled')) virt.vlanListDisabled = list;
+      else virt.vlanList = list;
     }
     for (const raw of body.split('\n')) {
       const line = raw.trim();
@@ -685,6 +713,12 @@ function parseVirts(text, ctx) {
         virt.rawDport = dport;               // unmunged ('0' = any) for filters
         if (dport === '0') dport = '1';
         if (vip === 'any') { vip = '0.0.0.0'; virt.wildcard = true; }
+        // PART-3 (field data: LX01/POR01): the partition rewrite prefixes
+        // NAMES, but a destination that is a bare address inside a partition
+        // became "CORP_10.1.2.3" - not a valid vip (the device rejects it).
+        // Strip the prefix back off when the remainder is a plain address.
+        const pm = vip.match(/^(.+)_(\d+\.\d+\.\d+\.\d+)$/);
+        if (pm && ctx.partitions && ctx.partitions.has(pm[1])) vip = pm[2];
         virt.vip = vip; virt.dport = dport;
         virt.aplic = dport === '1' ? 'ip' : dport === '80' ? 'http' : dport === '443' ? 'ssl' : 'basic-slb';
       } else if (line.startsWith('pool ')) {
@@ -732,6 +766,15 @@ function parseVirts(text, ctx) {
       }
     }
     warnVlanRestriction();
+    // put-aside rule: a vip that is not an address (a NAMED virtual-address
+    // destination, or an unresolvable prefix) must never reach the output -
+    // the device rejects the line and everything after it lands in the
+    // wrong menu.
+    if (virt.vip !== undefined && !virt.wildcard && !virt.vip.includes(':') &&
+        !/^\d+\.\d+\.\d+\.\d+$/.test(virt.vip)) {
+      ctx.warnManual('Virt', name, 'Destination "' + virt.vip + '" is not an IP address (a named virtual-address object?); the virtual was NOT converted (put aside) - set the actual vip manually!', block);
+      delVirt = true;
+    }
     if (!delVirt) ctx.virts.set(name, virt);
   }
 }

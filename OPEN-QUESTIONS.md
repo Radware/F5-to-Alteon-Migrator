@@ -159,6 +159,21 @@ them, it needs a network design decision, not a converter feature.
 
 ---
 
+## 4b. Same short name from two paths - CLOSED (COLL-1, 2026-08-11)
+
+**Status:** fixed. PART-4 moved the partition prefix onto the leaf of the
+path (cross-partition collisions); COLL-1 catches everything else: a
+pre-parse scan of all definition headers folds the folder chain into the
+name for any (kind, short-name) that is defined under more than one path
+(a folder-nested LDAP monitor vs a root LDAP monitor with the same leaf
+name -> both survive under distinct names), rewriting definitions and
+references together. Non-colliding names are untouched. Fleet census
+2026-08-11 (17 qkviews): one real folder-vs-root pair plus seven self-IPs
+literally named `<ip>%<rd>/24` (which had all collapsed onto the leaf
+"24"); every other collision was cross-partition and is covered by PART-4.
+
+---
+
 ## 5. Known environmental (not converter) limits
 
 These recur in every validation round and are **not** defects:

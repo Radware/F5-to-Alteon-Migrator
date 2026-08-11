@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 // Tests for input auto-detection: .qkview/.ucs (gzipped tar), raw tar,
 // extracted directory, and plain conf files.
 const { test } = require('node:test');
@@ -212,8 +212,9 @@ test('PARTITIONS: partition configs are extracted, prefixed, and their route dom
   const sources = await resolveInput(f);
   assert.strictEqual(sources.length, 4, 'Common base+main plus CORP base+main');
   assert.ok(sources.notes.some(n => n.includes('partition CORP INCLUDED')));
+  assert.deepStrictEqual(sources.partitions, ['CORP'], 'partition list surfaced for the parser');
   const { migrate } = require('../lib/index');
-  const res = migrate(sources.map(s => s.text));
+  const res = migrate(sources.map(s => s.text), { partitions: sources.partitions });
   // the partition route domain is now visible and drives split/segmentation
   const all = res.output + Object.values(res.rdOutputs || {}).join('\n');
   assert.match(all, /rip 10\.50\.1\.10/);
@@ -222,4 +223,37 @@ test('PARTITIONS: partition configs are extracted, prefixed, and their route dom
   assert.match(all, /\/c\/slb\/real app\n/);
   assert.match(all, /CORP_p_corp/);
   assert.match(all, /CORP_vs_corp/);
+  // PART-3: the vip is the plain ADDRESS - the partition prefix must never
+  // reach an address field (the device rejects "vip CORP_10.50.1.100")
+  assert.match(all, /vip 10\.50\.1\.100\n/);
+  assert.doesNotMatch(all, /vip CORP_/);
+});
+
+test('PART-4: folder-nested objects in two partitions with the SAME leaf name do not collide', async () => {
+  const dir = tmpdir();
+  const mkPart = (prefix, subnet) =>
+    'ltm node /' + prefix + '/APP/mail1 {\n    address ' + subnet + '.10\n}\n' +
+    'ltm pool /' + prefix + '/APP/mail-pool {\n    members {\n        /' + prefix + '/APP/mail1:25 {\n            address ' + subnet + '.10\n        }\n    }\n}\n' +
+    'ltm virtual /' + prefix + '/APP/mail-vs {\n    destination /' + prefix + '/' + subnet + '.1:25\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /' + prefix + '/APP/mail-pool\n}\n';
+  const tar = buildTar([
+    ['config/bigip_base.conf', 'net vlan /Common/v_main {\n    tag 10\n    interfaces {\n        1.1 { }\n    }\n}\n'],
+    ['config/bigip.conf', 'ltm node /Common/normal {\n    address 1.2.3.4\n}\n'],
+    ['config/partitions/CORP/bigip.conf', mkPart('CORP', '10.60.1')],
+    ['config/partitions/PARTB/bigip.conf', mkPart('PARTB', '10.70.1')],
+  ]);
+  const f = path.join(dir, 'parts4.qkview');
+  fs.writeFileSync(f, zlib.gzipSync(tar));
+  const sources = await resolveInput(f);
+  const { migrate } = require('../lib/index');
+  const res = migrate(sources.map(s => s.text), { partitions: sources.partitions });
+  const all = res.output + Object.values(res.rdOutputs || {}).join('\n');
+  // BOTH partitions' objects must exist, partition-prefixed, with their own addresses
+  assert.match(all, /\/c\/slb\/real CORP_mail1\n(    \w[^\n]*\n)*    rip 10\.60\.1\.10\n/);
+  assert.match(all, /\/c\/slb\/real PARTB_mail1\n(    \w[^\n]*\n)*    rip 10\.70\.1\.10\n/);
+  assert.match(all, /group CORP_mail-pool/);
+  assert.match(all, /group PARTB_mail-pool/);
+  assert.match(all, /virt CORP_mail-vs\n/);
+  assert.match(all, /virt PARTB_mail-vs\n/);
+  assert.match(all, /vip 10\.60\.1\.1\n/);
+  assert.match(all, /vip 10\.70\.1\.1\n/);
 });

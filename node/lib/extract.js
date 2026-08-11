@@ -183,7 +183,18 @@ async function resolveInput(file) {
   }
   if (partitions.length) {
     for (const s of out) {
-      for (const p of partitions) s.text = s.text.split('/' + p + '/').join('/Common/' + p + '_');
+      for (const p of partitions) {
+        // PART-4 (field data): prefix the LEAF of the path, not its first
+        // segment. An object nested in a folder (/CORP/APP/pool1) used to
+        // become /Common/CORP_APP/pool1, whose short name is plain "pool1" -
+        // colliding silently with /RTCS/APP/pool1 (both devices in the field
+        // report carry such pairs; the later partition overwrote the earlier
+        // one). Now /CORP/APP/pool1 -> /Common/APP/CORP_pool1: the folder
+        // chain is preserved (and later dropped), the leaf carries the
+        // partition. Non-nested paths are unchanged by this form.
+        const re = new RegExp('/' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/((?:[^/\\s:{}]+/)*)([^/\\s:{}]+)', 'g');
+        s.text = s.text.replace(re, '/Common/$1' + p + '_$2');
+      }
     }
   }
   // surfaced to the CLI
@@ -192,6 +203,7 @@ async function resolveInput(file) {
   for (const p of partitions.sort()) {
     out.notes.push('partition ' + p + ' INCLUDED - its objects are prefixed "' + p + '_" in the output');
   }
+  out.partitions = partitions;   // PART-3: the parser un-prefixes address destinations
   return out;
 }
 

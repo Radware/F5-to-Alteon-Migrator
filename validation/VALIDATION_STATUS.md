@@ -293,6 +293,54 @@ the four known environmental classes (chassis ports 50/60/90/100 absent on
 the 2-port lab VA + cascaded adminkey, DHCP-managed mgmt port). Zero
 converter defects. 88 regression tests.
 
+## Round 12 (2026-08-11): two field reports -> six defects + one traffic-proven feature
+
+A user reported the DNS tcp/udp pair bug ("same DNS TCP setting" at apply)
+and an SE asked whether F5 "vlans-enabled" can be expressed with filters.
+Working both surfaced far more:
+
+1. **DNS-1** - F5 `ip-protocol` was ignored on regular virtuals. Device
+   truth: EVERY protocol-capable virt service defaults to TCP (dns,
+   basic-slb, ntp, radius-auth, radius-acc, ip, sunrpc all answer "Current
+   protocol: tcp"); http(s) and the app services have no protocol command.
+   The field error was reproduced live and resolved by "protocol udp" on one
+   of the pair (apply completed). 26 UDP listeners across the two field
+   devices were previously emitted TCP-only.
+2. **PART-3** - the partition prefix leaked into vip addresses (302 + 385
+   virtuals!). Round 11's gate missed it: only the MAIN file was staged
+   then; the per-RD files hold all partition virtuals. Gate widened to
+   EVERY output file, permanently.
+3. **PART-4** - folder-nested partition objects collided on their leaf name
+   (both devices lost one partition's mail stack, silently).
+4. **COLL-1** - same-kind same-short-name from two paths merged (a real
+   folder-vs-root LDAP monitor pair + seven self-IPs literally named
+   "<ip>%<rd>/24" that collapsed onto "24": device A had silently lost 22
+   of its 34 interfaces).
+5. **LIVE-24** - port 111 is reserved for sunrpc (map extended); a port-0
+   member emitted "addport 0" which the device rejects (now omitted);
+   34.0.12 validates pip adds against the CURRENT base type (version note
+   added to the automap diagnostic).
+6. **LIVE-25 / LDAP-1** - imap/pop3 monitor credentials have no Alteon
+   commands (fall back to TCP like LIVE-23; smtp KEEPS username - the
+   device requires it); the ldap virt service has NO pbind on BOTH 34.5.7
+   and 34.0.12 - persistence there is now omitted with a diagnostic.
+7. **VLANF-1 (feature)** - F5 "vlans-enabled" converted to a filter pair
+   per VIP (allow per listed VLAN + deny elsewhere, IDs 200-989, bound to
+   all VLAN member ports). TRAFFIC-PROVEN on live 34.0.12 before shipping:
+   baseline VIP answered from BOTH VLANs; with filters it answered from the
+   allowed VLAN, timed out from the other, and an unrestricted control VIP
+   on the same filter-enabled ports stayed reachable throughout. 328 + 205
+   virtuals across the two field devices use this construct.
+
+Net effect on the field devices: device A 321 -> 379 virtuals, 12 -> 34
+interfaces; device B 203 -> 249 virtuals; plus 110/71 allow + 109/69 deny
+VLAN-restriction filters.
+
+Gate history this round: full-file staging (main + every per-RD file) ran
+THREE times - (1) pre-COLL-1 bits on both devices (found LIVE-24/25/LDAP-1),
+(2) killed once mid-run when PART-4 landed (stale bits), (3) FINAL gate on
+the exact v0.9.0 bits: device A (34.5.7) 11,170/11,170 lines SENT with 661 findings and device B (34.0.12) 7,323/7,323 SENT with 461 findings - every one in the known environmental classes (chassis ports absent on the 2-port lab VA + their menu cascades, now multiplied by the VLANF port bindings; trunk adminkey; DHCP-managed mgmt port) plus two same-session staging artifacts (one advhc redeclared across two per-RD files that target SEPARATE devices in reality; one BOM injected by the staging concatenation script, not by the tool). ZERO converter defects; the LDAP-1/LIVE-24/LIVE-25 fixes verified clean on-device. 102 regression tests.
+
 ## Harness & safety
 
 Use **`validate3.js`** (`validate.js`/`validate2.js` kept for reference only —
