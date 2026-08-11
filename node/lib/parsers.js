@@ -35,11 +35,18 @@ function mapPort(ctx, type, owner, p) {
 
 function splitName(raw) {
   // "/Common/name" or "/rd/iapp.app/name" -> {rd, name, iapp}
+  // '%' is sanitized out of the NAME: F5 allows objects literally named by
+  // their RD-scoped address ("/CORP/10.137.5.30%1"), and the Alteon CLI
+  // rejects '%' in an ID ("Special characters are not allowed" - found live
+  // when partition configs brought such nodes in). Applied at this single
+  // funnel so definitions and every reference stay consistent.
+  // `raw` keeps the % (destination parsing extracts the RD from it).
+  const clean = (n) => n.replace(/%/g, '_');
   const s = raw.replace(/ \{$/, '').trim();
-  if (!s.includes('/')) return { rd: 'Common', name: s, iapp: false };
+  if (!s.includes('/')) return { rd: 'Common', name: clean(s), raw: s, iapp: false };
   const parts = s.split('/').filter(Boolean);
-  if (parts.length === 2) return { rd: parts[0], name: parts[1], iapp: false };
-  return { rd: parts[0], name: parts[parts.length - 1], iapp: true };
+  const last = parts[parts.length - 1];
+  return { rd: parts[0], name: clean(last), raw: last, iapp: parts.length > 2 };
 }
 
 function hcLongName(ctx, hc, owner) {
@@ -214,6 +221,46 @@ function parseMonitors(text, ctx) {
         hc.attrs.set('cipher', '"ALL"');
       } else if (line.startsWith('description ')) hc.attrs.set('name', line.slice(12));
       else if (line.startsWith('username ')) hc.advtype.set('username', line.slice(9));
+      else if (line.startsWith('password ')) hc.advtype.set('password', line.slice(9));
+    }
+    // LIVE-23: authenticated HTTP monitors. The Alteon HTTP health check has
+    // no "username" command - the device syntax is
+    //   /http/auth <none|basic user password|ntlm2|ntlmssp [domain/]user password>
+    // (discovered from the CLI usage string; "username" was rejected with
+    // 'unknown command'). F5 stores the monitor password ENCRYPTED ($M$...),
+    // so when no plaintext password exists the credentials cannot be carried
+    // over - the check falls back to TCP (a credential-less HTTP probe would
+    // get 401s and mark HEALTHY servers down) and the log gives the exact
+    // device command to recreate it.
+    if (hc.hcType === 'ldap' && (hc.advtype.has('username') || hc.advtype.has('password'))) {
+      // Alteon LDAP checks have no username/password commands (device menu:
+      // dnformat/bind only) and the F5 bind password is encrypted anyway.
+      const user = hc.advtype.get('username') || '';
+      hc.hcType = 'tcp';
+      hc.advtype.clear();
+      ctx.warnManual('Health Check', name, 'LDAP monitor uses an authenticated bind (user "' + user +
+        '"); the password is encrypted in the F5 config and Alteon LDAP checks configure binds differently (/ldap/dnformat + bind). ' +
+        'Converted as a TCP check; recreate the authenticated LDAP check manually if bind-level monitoring is required.');
+    }
+    if (['http', 'https'].includes(hc.hcType) && hc.advtype.has('username')) {
+      const user = hc.advtype.get('username');
+      const pass = hc.advtype.get('password') || '';
+      hc.advtype.delete('username');
+      hc.advtype.delete('password');
+      if (pass && !pass.startsWith('$M$')) {
+        hc.advtype.set('auth', 'basic ' + user + ' ' + pass);
+      } else {
+        hc.hcType = 'tcp';
+        hc.advtype.clear();
+        hc.attrs.delete('ssl');
+        hc.attrs.delete('cipher');
+        ctx.warnManual('Health Check', name, 'HTTP monitor uses basic authentication (user "' + user +
+          '"); F5 stores the password encrypted, so the credentials CANNOT be extracted from the config. ' +
+          'Converted as a TCP check so healthy servers are not marked down by 401 responses. To restore the authenticated check on the Alteon: ' +
+          '/c/slb/advhc/health ' + name + ' HTTP/http/auth basic ' + user + ' <password>  (ntlm2/ntlmssp also available).');
+      }
+    } else if (hc.advtype.has('password')) {
+      hc.advtype.delete('password');   // never emit a credential line blindly
     }
     // LIVE-16 (found at APPLY time, not staging): Alteon SMTP health checks
     // require a username — without one the whole config refuses to apply.
@@ -624,7 +671,7 @@ function parseVirts(text, ctx) {
       } else if (line.startsWith('ip-protocol ')) {
         virt.proto = line.slice(12);
       } else if (line.startsWith('destination ')) {
-        let dest = splitName(line.replace('destination ', '')).name;
+        let dest = splitName(line.replace('destination ', '')).raw;
         if (dest.includes('%')) {
           const rdm = dest.match(/%(\d+)/);
           if (rdm) virt.rd = rdm[1];        // route-domain id -> per-RD output split

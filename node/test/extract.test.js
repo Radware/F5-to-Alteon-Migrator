@@ -135,7 +135,7 @@ test('migrate() reports an object-count summary (zero for non-F5 text)', () => {
   assert.strictEqual(junk.objectCount, 0);
 });
 
-test('GTM and partition configs in an archive produce Phase-4 notes', async () => {
+test('GTM stays a Phase-4 note; partition configs are INCLUDED as sources', async () => {
   const dir = tmpdir();
   const tar = buildTar([
     ['config/bigip.conf', MAIN],
@@ -146,10 +146,10 @@ test('GTM and partition configs in an archive produce Phase-4 notes', async () =
   const f = path.join(dir, 'gtmbox.qkview');
   fs.writeFileSync(f, zlib.gzipSync(tar));
   const sources = await resolveInput(f);
-  assert.strictEqual(sources.length, 2);
+  assert.strictEqual(sources.length, 3, 'base + main + DMZ partition config');
   assert.strictEqual(sources.notes.length, 2);
   assert.ok(sources.notes.some(n => n.includes('GTM')));
-  assert.ok(sources.notes.some(n => n.includes('PARTITION')));
+  assert.ok(sources.notes.some(n => n.includes('partition DMZ INCLUDED')));
 });
 
 test('FQDN-defined nodes are skipped with guidance, not emitted without an IP', () => {
@@ -193,4 +193,33 @@ test('large non-config entries are streamed past, not buffered (early stop)', as
   const sources = await resolveInput(f);
   assert.strictEqual(sources.length, 2);
   assert.ok(Date.now() - t0 < 5000);
+});
+
+test('PARTITIONS: partition configs are extracted, prefixed, and their route domains become visible', async () => {
+  const dir = tmpdir();
+  const BASE = 'net vlan /Common/v_main {\n    tag 10\n    interfaces {\n        1.1 { }\n    }\n}\nnet self /Common/s_main {\n    address 10.1.1.5/24\n    vlan /Common/v_main\n}\n';
+  const MAIN = 'ltm node /Common/app {\n    address 10.1.1.10\n}\nltm pool /Common/p_main {\n    members {\n        /Common/app:80 {\n            address 10.1.1.10\n        }\n    }\n}\n';
+  const CORP_BASE = 'net route-domain /CORP/RD500 {\n    id 500\n    vlans {\n        /CORP/v_corp\n    }\n}\nnet vlan /CORP/v_corp {\n    tag 500\n    interfaces {\n        1.2 { }\n    }\n}\nnet self /CORP/s_corp {\n    address 10.50.1.5%500/24\n    vlan /CORP/v_corp\n}\n';
+  const CORP_MAIN = 'ltm node /CORP/app {\n    address 10.50.1.10%500\n}\nltm pool /CORP/p_corp {\n    members {\n        /CORP/app:80 {\n            address 10.50.1.10%500\n        }\n    }\n}\nltm virtual /CORP/vs_corp {\n    destination /CORP/10.50.1.100%500:80\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /CORP/p_corp\n}\n';
+  const tar = buildTar([
+    ['config/bigip_base.conf', BASE],
+    ['config/bigip.conf', MAIN],
+    ['config/partitions/CORP/bigip_base.conf', CORP_BASE],
+    ['config/partitions/CORP/bigip.conf', CORP_MAIN],
+  ]);
+  const f = path.join(dir, 'parts.qkview');
+  fs.writeFileSync(f, zlib.gzipSync(tar));
+  const sources = await resolveInput(f);
+  assert.strictEqual(sources.length, 4, 'Common base+main plus CORP base+main');
+  assert.ok(sources.notes.some(n => n.includes('partition CORP INCLUDED')));
+  const { migrate } = require('../lib/index');
+  const res = migrate(sources.map(s => s.text));
+  // the partition route domain is now visible and drives split/segmentation
+  const all = res.output + Object.values(res.rdOutputs || {}).join('\n');
+  assert.match(all, /rip 10\.50\.1\.10/);
+  // objects are partition-prefixed and no longer collide with /Common names
+  assert.match(all, /\/c\/slb\/real CORP_app\n/);
+  assert.match(all, /\/c\/slb\/real app\n/);
+  assert.match(all, /CORP_p_corp/);
+  assert.match(all, /CORP_vs_corp/);
 });

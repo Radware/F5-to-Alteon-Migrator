@@ -32,6 +32,10 @@ const PAGER_RE = /Press q to quit, any other key to continue\s*$/;
 const VALUE_PROMPT_RE = /\[[^\]\n]*\]\s*:\s*$/;  // colon required: menu banners end with "...Menu]" but prompts end with "]:"
 // Alteon CLI prompt, e.g. ">> Main#" / ">> Real Server nc_srv1#" (trailing space optional)
 const PROMPT_RE = /^>> [^\n]*#\s*$/m;
+// Settle window after the shell prompt before sending the next line. Default
+// 600ms is conservative; long multi-device runs lower it via SETTLE_MS after
+// calibrating against a chunk with a known error count.
+const SETTLE_MS = parseInt(process.env.SETTLE_MS || '600', 10);
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 
 const conn = new Client();
@@ -101,7 +105,19 @@ function onData(d) {
     armIdle();
     return;
   }
-  if (PROMPT_RE.test(stripAnsi(buf.slice(-160)))) { const r = buf; buf = ''; onResponse(r); return; }
+  if (PROMPT_RE.test(stripAnsi(buf.slice(-160)))) {
+    // Prompt seen, but the device may still be printing a menu banner. Sending
+    // the next line now races that output and gets characters eaten, which
+    // silently mangles a "/c/..." path line: the CLI then stays at the previous
+    // menu and the FOLLOWING attribute line reports "unknown command" — a
+    // phantom defect blamed on the converter. Wait for the stream to settle.
+    // Tunable: the echo-verification + resend in onResponse() is the real
+    // safety net, so a shorter settle is viable for long runs. Calibrate any
+    // new value against a chunk with a known error count before trusting it.
+    clearTimeout(idle);
+    idle = setTimeout(() => { const r = buf; buf = ''; onResponse(r); }, SETTLE_MS);
+    return;
+  }
   if (VALUE_PROMPT_RE.test(clean) && current !== null && !/^(diff|revert|exit|y)$/.test(current.trim())) {
     // a config line asked for more input -> not paste-safe -> converter bug
     findings.push({ line: current, error: 'INTERACTIVE PROMPT (line is not paste-safe): ' + clean.slice(-120).trim().slice(-100) });

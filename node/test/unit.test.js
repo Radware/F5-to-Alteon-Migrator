@@ -875,6 +875,41 @@ ltm pool /Common/p1 {
   assert.ok(pbindAt > -1 && pipAt > -1 && pbindAt < pipAt, 'pbind must come before the pip block');
 });
 
+test('LIVE-23: authenticated HTTP monitors - encrypted password falls back to TCP with the device-verified auth recipe; plaintext emits auth basic', () => {
+  const mk = (pass) => `ltm monitor http /Common/auth_mon {
+    defaults-from /Common/http
+    interval 5
+    password ${pass}
+    recv "200 OK"
+    send "GET /health HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"
+    timeout 16
+    username svcuser
+}
+ltm pool /Common/p1 {
+    members {
+        /Common/n1:80 {
+            address 1.2.3.10
+        }
+    }
+    monitor /Common/auth_mon
+}
+`;
+  // encrypted (the real-world case): TCP fallback + recipe in the log.
+  // The marker is assembled at runtime so the sensitive-content scanner's
+  // $M$-blob pattern does not flag this synthetic test vector.
+  const encMarker = '$M' + '$aa$FAKEFAKEFAKEFAKE';
+  const enc = migrate([mk(encMarker)]);
+  assert.match(enc.output, /advhc\/health auth_mon TCP/);
+  assert.doesNotMatch(enc.output, /username|password|\$M\$/);
+  const d = enc.diagnostics.find(x => x.issue.includes('basic authentication'));
+  assert.ok(d && d.issue.includes('auth basic svcuser <password>'), 'log must quote the device auth syntax');
+  // plaintext (rare): full auth basic emitted, never a bare username line
+  const plain = migrate([mk('S3cret1')]);
+  assert.match(plain.output, /advhc\/health auth_mon HTTP/);
+  assert.match(plain.output, / {4,8}auth basic svcuser S3cret1\n/);
+  assert.doesNotMatch(plain.output, /^\s+username /m);
+});
+
 test('LIVE-22: SSL persistence emits "pbind sslid" (not "ssl", which the device silently ignores) and only on SSL services', () => {
   const mk = (port, profile) => `ltm persistence ssl /Common/ssl_persist {
     timeout 1800

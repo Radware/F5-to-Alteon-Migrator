@@ -25,9 +25,11 @@ function detectKind(file) {
 }
 
 // Streaming ustar reader. Resolves with {entryName: contentString} for every
-// wanted entry found; stops reading early once all are found.
-// archive entries that are NOT converted but the user must know exist
-const NOTEWORTHY_RE = /^config\/(bigip_gtm\.conf|partitions\/[^/]+\/bigip\.conf)$/;
+// wanted entry found.
+// Partition configs are CONVERTED (each partition's objects get a
+// "<PARTITION>_" prefix); GTM remains detected-only (Phase 4).
+const NOTEWORTHY_RE = /^config\/bigip_gtm\.conf$/;
+const PARTITION_RE = /^config\/partitions\/([^/]+)\/bigip(_base)?\.conf$/;
 
 function extractFromTar(file, gzipped, wantedNames) {
   return new Promise((resolve, reject) => {
@@ -59,11 +61,11 @@ function extractFromTar(file, gzipped, wantedNames) {
           name = name.replace(/^\.\//, '');
           const size = parseInt(block.slice(124, 136).toString('ascii').trim(), 8) || 0;
           if (size > 0 && NOTEWORTHY_RE.test(name)) noteworthy.push(name);
-          // early-stop: all configs found AND we've left the config/ region
-          // (so bigip_gtm.conf / partition configs still get noticed)
-          if (Object.keys(found).length === wanted.size && !name.startsWith('config/')) return finish();
+          // NOTE: no early-stop any more - partition configs
+          // (config/partitions/*/bigip*.conf) can sit anywhere in the archive
+          // and their number is unknown up front, so the whole tar is scanned.
           const pad = (512 - (size % 512)) % 512;
-          entry = { name, keep: wanted.has(name), chunks: [], bodyLeft: size, totalLeft: size + pad };
+          entry = { name, keep: wanted.has(name) || PARTITION_RE.test(name), chunks: [], bodyLeft: size, totalLeft: size + pad };
           if (entry.totalLeft > 0) mode = 'body';
         } else {
           const take = Math.min(buf.length, entry.totalLeft);
@@ -101,7 +103,10 @@ function readFromDir(dir) {
   const pdir = path.join(dir, 'config', 'partitions');
   if (fs.existsSync(pdir)) {
     for (const p of fs.readdirSync(pdir)) {
-      if (fs.existsSync(path.join(pdir, p, 'bigip.conf'))) noteworthy.push('config/partitions/' + p + '/bigip.conf');
+      for (const f of ['bigip_base.conf', 'bigip.conf']) {
+        const cand = path.join(pdir, p, f);
+        if (fs.existsSync(cand)) out['config/partitions/' + p + '/' + f] = fs.readFileSync(cand, 'utf8');
+      }
     }
   }
   return { found: out, noteworthy };
@@ -159,10 +164,34 @@ async function resolveInput(file) {
     throw new Error('no config/bigip.conf found inside ' + file +
       (kind === 'dir' ? ' (expected <dir>/config/bigip.conf, <dir>/bigip.conf, or qkview/UCS files inside the folder)' : ' (is this a qkview/UCS archive?)'));
   }
-  // surfaced to the CLI: configs on the device that are NOT converted (Phase 4)
+  // Administrative PARTITIONS: converted alongside /Common. Each partition's
+  // object paths (/CORP/name) are rewritten to a prefixed name under /Common
+  // (/Common/CORP_name) IN EVERY FILE, so definitions, intra-partition
+  // references and cross-partition references all stay consistent, and two
+  // partitions can never collide on a short name. Route domains defined
+  // inside partitions become visible to the RD split/segmentation logic
+  // (field report: a device kept 6 of its 9 route domains in partitions).
+  const partitions = [];
+  for (const name of Object.keys(res.found)) {
+    const m = name.match(PARTITION_RE);
+    if (m && !partitions.includes(m[1])) partitions.push(m[1]);
+  }
+  for (const p of partitions.sort()) {
+    for (const f of ['config/partitions/' + p + '/bigip_base.conf', 'config/partitions/' + p + '/bigip.conf']) {
+      if (res.found[f]) out.push({ label: file + ' -> ' + f, text: res.found[f] });
+    }
+  }
+  if (partitions.length) {
+    for (const s of out) {
+      for (const p of partitions) s.text = s.text.split('/' + p + '/').join('/Common/' + p + '_');
+    }
+  }
+  // surfaced to the CLI
   out.notes = (res.noteworthy || []).map(n =>
-    n.includes('bigip_gtm') ? 'device also has a GTM/DNS config (' + n + ') - GTM/GSLB is NOT converted (Phase 4)'
-      : 'device has a PARTITION config (' + n + ') - partitions are NOT converted (Phase 4)');
+    'device also has a GTM/DNS config (' + n + ') - GTM/GSLB is NOT converted (Phase 4)');
+  for (const p of partitions.sort()) {
+    out.notes.push('partition ' + p + ' INCLUDED - its objects are prefixed "' + p + '_" in the output');
+  }
   return out;
 }
 

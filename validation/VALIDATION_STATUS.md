@@ -267,6 +267,32 @@ The prospect's actual qkview now converts with 14 egress-pip services, the
 PIP table generated from its two floating self-IPs, and the generated config
 staged non-destructively on the lab device. 86 regression tests.
 
+## Round 11 (2026-08-11): PARTITIONS included (field report) - three defects fixed, gated on live staging
+
+A user reported the tool "reads the Common partition and nothing more": their
+device kept 6 of its 9 route domains inside config/partitions/*/bigip*.conf.
+Verified against their qkview, then fixed and validated:
+
+1. **Partitions now convert** (PART-1): partition configs extracted, objects
+   prefixed per partition (CORP_...), partition RDs feed split/segmentation.
+   Their device: 18 -> 203 virtuals, 2 -> 8 per-RD outputs.
+2. **Staging the result found two more defects** that unit tests could not:
+   - PART-2: partition nodes NAMED by RD-scoped address put "%" into Alteon
+     IDs -> 60x "Special characters are not allowed" + cascades.
+   - LIVE-23: authenticated http/https/ldap monitors emitted a "username"
+     line the device rejects; F5 stores those passwords encrypted, so the
+     checks fall back to TCP with the device-verified auth recipe in the log
+     (HTTP(S): /http/auth basic user password; LDAP: dnformat/bind).
+3. **False-pass caught and discarded**: one staging run reported 0 errors
+   while SENT=0 - the device's connection protection had refused the session
+   (two 2,100-line stagings back-to-back). The run was repeated after an
+   18-minute quiet window; reports now always show SENT/UNSENT.
+
+Final gate on live 34.0.12: 2,061/2,061 lines SENT, 21 errors, every one in
+the four known environmental classes (chassis ports 50/60/90/100 absent on
+the 2-port lab VA + cascaded adminkey, DHCP-managed mgmt port). Zero
+converter defects. 88 regression tests.
+
 ## Harness & safety
 
 Use **`validate3.js`** (`validate.js`/`validate2.js` kept for reference only —
