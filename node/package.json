@@ -1,6 +1,6 @@
 {
   "name": "@radware/f5-to-alteon",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Migrate an F5 BIG-IP (tmsh) configuration to Radware Alteon CLI - accepts qkview/UCS archives, config folders, or bare conf files; converts virtuals (incl. tcp/udp protocol and VLAN-restricted listeners), pools, monitors, persistence, SSL, SNAT, VLANs/routes, administrative partitions, route domains (segmentation or per-RD split) and wildcard virtuals (filters).",
   "license": "Apache-2.0",
   "repository": {

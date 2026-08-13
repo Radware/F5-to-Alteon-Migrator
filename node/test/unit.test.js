@@ -1516,6 +1516,32 @@ test('DNS-1: ip-protocol any emits the TCP default plus a second-virtual advisor
   assert.ok(res.diagnostics.some(d => d.name === 'v_sctp' && d.issue.includes('sctp')));
 });
 
+// ---- ROUTE-1 (field report): duplicate routes/gateways and cross-RD gateways ----
+test('ROUTE-1: identical route objects fold to ONE route add; duplicate default gws fold to ONE gw (device refuses the pair)', () => {
+  const conf =
+    'net route /Common/LEGACY.Internal {\n    gw 10.9.67.254%1\n    network 10.0.0.0%1/8\n}\n' +
+    'net route /Common/LEGACY.TEMP {\n    gw 10.9.67.254%1\n    network 10.0.0.0/8\n}\n' +
+    'net route /Common/OTHER.Internal {\n    gw 10.9.67.254%1\n    network 10.0.0.0/8\n}\n' +
+    'net route /Common/LEGACY.Default {\n    gw 10.9.67.254%1\n    network default%1\n}\n' +
+    'net route /Common/OTHER.Default {\n    gw 10.9.67.254%1\n    network default\n}\n' +
+    'ltm node /Common/n1 {\n    address 10.9.67.5%1\n}\n';
+  const res = migrate([conf]);
+  const all = res.output + Object.values(res.rdOutputs || {}).join('\n');
+  assert.strictEqual((all.match(/route\/ip4\/add 10\.0\.0\.0 255\.0\.0\.0 10\.9\.67\.254/g) || []).length, 1, 'one route add, not three');
+  assert.strictEqual((all.match(/addr 10\.9\.67\.254/g) || []).length, 1, 'one gateway, not two');
+  assert.ok(res.diagnostics.filter(d => d.issue.includes('duplicate folded')).length >= 3);
+});
+
+test('ROUTE-1: network RD wins over gateway RD; disagreeing RDs put the route aside', () => {
+  const conf =
+    'net route /Common/PUB.Internal {\n    gw 10.9.67.254%1\n    network 10.0.0.0%599/8\n}\n' +
+    'ltm node /Common/n1 {\n    address 10.9.67.5%1\n}\nltm node /Common/n2 {\n    address 10.50.9.5%599\n}\n';
+  const res = migrate([conf]);
+  const all = res.output + Object.values(res.rdOutputs || {}).join('\n');
+  assert.ok(!all.includes('route/ip4/add 10.0.0.0'), 'cross-RD route must not be emitted anywhere (put aside)');
+  assert.ok(res.diagnostics.some(d => d.issue.includes('parent/inter-RD')));
+});
+
 // ---- LIVE-24/25/LDAP-1: full-file staging findings on both devices ----
 test('LIVE-24: port 111 coerces to the sunrpc application; ip-protocol udp gets protocol udp there', () => {
   const conf = 'ltm node /Common/n1 {\n    address 10.7.7.10\n}\n' +

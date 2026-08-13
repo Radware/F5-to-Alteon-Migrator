@@ -920,17 +920,46 @@ function parseRoutes(text, ctx) {
     let routeRd = netRd || '0';
     if (gw && gw.includes('%')) {         // route-domain suffix on the gateway
       const [bare, gwRd] = gw.split('%');
-      routeRd = gwRd;
-      ctx.warnManual('Route', net || 'N/A', 'Route gateway is in Route Domain ' + gwRd +
-        ' (' + gw + '); RD suffix stripped — see the per-route-domain output files!');
       gw = bare;
+      // ROUTE-1 (field report): the route belongs to the RD of its NETWORK
+      // (that is the routing table it installs into); the gateway's RD tag
+      // must never override it. When the two DISAGREE (F5 parent/inter-RD
+      // routing: "network 10.0.0.0%599 gw 10.192.67.254%1"), the next hop
+      // lives in a DIFFERENT instance after the per-RD split - there is no
+      // correct single-instance emission, so the route is put aside.
+      if (netRd && gwRd !== netRd) {
+        ctx.warnManual('Route', net || 'N/A', 'Route belongs to Route Domain ' + netRd + ' but its gateway ' + gw +
+          ' is in Route Domain ' + gwRd + ' (F5 parent/inter-RD routing). After the per-RD split these are separate Alteon instances, so the route is NOT converted (put aside) - reach that destination via a gateway that is local to the RD-' + netRd + ' instance!');
+        continue;
+      }
+      if (!netRd) {
+        routeRd = gwRd;
+        ctx.warnManual('Route', net || 'N/A', 'Route gateway is in Route Domain ' + gwRd +
+          ' (' + gw + '%' + gwRd + '); RD suffix stripped — see the per-route-domain output files!');
+      }
     }
     if (!/^\d+\.\d+\.\d+\.\d+$/.test(gw || '')) {           // live finding: "bad gateway IP address null"
       ctx.warnManual('Route', net || 'N/A', 'Route has no usable IPv4 gateway ("' + gw + '"); skipped — address manually!');
       continue;
     }
-    if (net === '0.0.0.0 0.0.0.0') ctx.gws.set(ctx.nextId('gw'), { addr: gw, rdId: routeRd });
-    else if (net && !net.includes('%')) ctx.routes.push({ line: net + ' ' + gw, rdId: routeRd });
+    // ROUTE-1 dedup (field report): F5 configs carry several route objects
+    // (one per partition) that collapse to the SAME line in one routing
+    // table. Duplicate static routes are merely noise, but two default
+    // gateways with one address REFUSE to apply ("Error: Gateways N and M
+    // have the same IP address." - verified live), so both are folded.
+    if (net === '0.0.0.0 0.0.0.0') {
+      const dup = [...ctx.gws.values()].some((g) => g.addr === gw && (g.rdId || '0') === routeRd);
+      if (dup) {
+        ctx.warnManual('Route', 'default', 'Another F5 route object already produced default gateway ' + gw +
+          (routeRd !== '0' ? ' in Route Domain ' + routeRd : '') + '; duplicate folded (the device refuses two gateways with the same address).');
+      } else ctx.gws.set(ctx.nextId('gw'), { addr: gw, rdId: routeRd });
+    } else if (net && !net.includes('%')) {
+      const line = net + ' ' + gw;
+      if (ctx.routes.some((r) => r.line === line && (r.rdId || '0') === routeRd)) {
+        ctx.warnManual('Route', net, 'Another F5 route object already produced this route (' + line +
+          (routeRd !== '0' ? ', Route Domain ' + routeRd : '') + '); duplicate folded.');
+      } else ctx.routes.push({ line, rdId: routeRd });
+    }
   }
 }
 
