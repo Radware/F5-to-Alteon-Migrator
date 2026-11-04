@@ -31,11 +31,12 @@ function detectKind(file) {
 const NOTEWORTHY_RE = /^config\/bigip_gtm\.conf$/;
 const PARTITION_RE = /^config\/partitions\/([^/]+)\/bigip(_base)?\.conf$/;
 
-function extractFromTar(file, gzipped, wantedNames) {
+function extractFromTar(file, gzipped, wantedNames, maxConfigBytes) {
   return new Promise((resolve, reject) => {
     const wanted = new Set(wantedNames);
     const found = {};
     const noteworthy = [];
+    let keptBytes = 0;
     const src = fs.createReadStream(file);
     const input = gzipped ? src.pipe(zlib.createGunzip()) : src;
     let pending = Buffer.alloc(0);      // partial header block
@@ -66,6 +67,10 @@ function extractFromTar(file, gzipped, wantedNames) {
           // and their number is unknown up front, so the whole tar is scanned.
           const pad = (512 - (size % 512)) % 512;
           entry = { name, keep: wanted.has(name) || PARTITION_RE.test(name), chunks: [], bodyLeft: size, totalLeft: size + pad };
+          if (entry.keep && (keptBytes += size) > maxConfigBytes) {
+            finish(new Error('the config files inside ' + file + ' are too large to convert'));
+            return;
+          }
           if (entry.totalLeft > 0) mode = 'body';
         } else {
           const take = Math.min(buf.length, entry.totalLeft);
@@ -135,13 +140,18 @@ function scanDirForCandidates(dir) {
 }
 
 // Resolve one CLI input (archive/dir/conf) to an ordered list of
-// {label, text} config sources.
-async function resolveInput(file) {
+// {label, text} config sources. opts.maxConfigBytes caps what is held in memory
+// (the HTTP service sets it; a bad upload must not exhaust the pod's RAM).
+async function resolveInput(file, opts) {
+  const maxConfigBytes = (opts && opts.maxConfigBytes) || Infinity;
   const kind = detectKind(file);
   if (kind === 'binary') {
     throw new Error(file + ' is not an F5 config, qkview/UCS archive, or config directory (binary content).');
   }
-  if (kind === 'conf') return [{ label: file, text: fs.readFileSync(file, 'utf8') }];
+  if (kind === 'conf') {
+    if (fs.statSync(file).size > maxConfigBytes) throw new Error(file + ' is too large to convert');
+    return [{ label: file, text: fs.readFileSync(file, 'utf8') }];
+  }
   let res;
   if (kind === 'dir') {
     res = readFromDir(file);
@@ -155,7 +165,7 @@ async function resolveInput(file) {
           candidates.map(c => '    ' + c).join('\n'));
       }
     }
-  } else res = await extractFromTar(file, kind === 'targz', WANTED);
+  } else res = await extractFromTar(file, kind === 'targz', WANTED, maxConfigBytes);
   const out = [];
   for (const want of WANTED) {
     if (res.found[want]) out.push({ label: file + ' -> ' + want, text: res.found[want] });

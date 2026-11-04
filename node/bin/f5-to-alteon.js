@@ -2,19 +2,15 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { migrate } = require('../lib/index');
+const { migrate, outputFiles, F_CONFIG, F_MANUAL, F_UNSUP } = require('../lib/index');
 const { resolveInput, detectKind } = require('../lib/extract');
-
-// output file names describe their ROLE (the folder carries the device name)
-const F_CONFIG = 'alteon-config.txt';
-const F_MANUAL = 'needs-manual-work.txt';
-const F_UNSUP = 'not-supported.txt';
 
 function usage() {
   console.log(`f5-to-alteon - migrate F5 BIG-IP (tmsh) config to Radware Alteon CLI
 
 Usage:
   f5-to-alteon <input> [more inputs ...] [options]
+  f5-to-alteon serve                 Run as an HTTP service (POST /convert)
 
 Inputs (auto-detected, mix freely):
   device.qkview / device.ucs     F5 support archive (config extracted for you)
@@ -43,6 +39,7 @@ Options:
 
 const args = process.argv.slice(2);
 if (!args.length || args.includes('-h') || args.includes('--help')) { usage(); process.exit(args.length ? 0 : 1); }
+if (args[0] === 'serve') return require('../lib/server').serve();
 
 const files = [];
 let outDir = null, name = null, toStdout = false, rdMode = 'auto', bulkFlag = null;
@@ -109,12 +106,9 @@ function checkInputs(list) {
 
 function writeResult(res, dir, label) {
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, F_CONFIG), res.output);
-  for (const [rdId, rdOut] of Object.entries(res.rdOutputs || {})) {
-    fs.writeFileSync(path.join(dir, 'alteon-config-routedomain-' + rdId + '.txt'), rdOut);
+  for (const [file, content] of Object.entries(outputFiles(res))) {
+    fs.writeFileSync(path.join(dir, file), content);
   }
-  fs.writeFileSync(path.join(dir, F_MANUAL), res.log1);
-  fs.writeFileSync(path.join(dir, F_UNSUP), res.log2);
   const manual = res.diagnostics.filter(d => d.sev === 'log1').length;
   const unsupported = res.diagnostics.filter(d => d.sev === 'log2').length;
   const parts = Object.entries(res.summary).filter(([, v]) => v > 0).map(([k, v]) => v + ' ' + k);

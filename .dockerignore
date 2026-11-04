@@ -1,0 +1,10 @@
+.git
+.github
+.devcontainer
+**/node_modules
+node/test
+docs
+legacy-reference
+validation
+*.md
+!node/README.md
