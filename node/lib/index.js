@@ -377,4 +377,20 @@ function migrate(texts, opts) {
   };
 }
 
-module.exports = { migrate };
+// output file names describe their ROLE (the folder carries the device name)
+const F_CONFIG = 'alteon-config.txt';
+const F_MANUAL = 'needs-manual-work.txt';
+const F_UNSUP = 'not-supported.txt';
+
+// {file name: content} for one migrate() result
+function outputFiles(res) {
+  const files = { [F_CONFIG]: res.output };
+  for (const [rdId, rdOut] of Object.entries(res.rdOutputs || {})) {
+    files['alteon-config-routedomain-' + rdId + '.txt'] = rdOut;
+  }
+  files[F_MANUAL] = res.log1;
+  files[F_UNSUP] = res.log2;
+  return files;
+}
+
+module.exports = { migrate, outputFiles, F_CONFIG, F_MANUAL, F_UNSUP };

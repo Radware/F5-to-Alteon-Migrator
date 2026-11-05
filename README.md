@@ -59,6 +59,36 @@ node bin/f5-to-alteon.js <input>
 
 All three are identical on Windows (PowerShell/CMD), macOS, and Linux.
 
+**4. As an HTTP service** - in a container or with `f5-to-alteon serve`. Upload one
+file as the request body and get the output files back as a zip. For a
+`bigip_base.conf` + `bigip.conf` pair, concatenate them, base first:
+
+```bash
+docker run -p 8080:8080 ghcr.io/radware/f5-to-alteon-migrator
+curl -f -X POST -T device.qkview -o result.zip localhost:8080/convert
+cat bigip_base.conf bigip.conf | curl -f -X POST -T - -o result.zip localhost:8080/convert
+```
+
+Keep `-f`: without it curl saves an error response as `result.zip`. Use `-T` rather
+than `--data-binary @file`, which loads the whole file into memory and, on older
+curl, turns a mistyped path into an empty upload. To see why a request failed, run
+it again without `-f` and `-o`.
+
+The zip holds the [output files](#outputs) plus `summary.json` (object counts and
+notes). Add `?rdMode=split` or `?rdMode=segment` to choose the route-domain
+strategy. Errors return JSON: `400` bad request, `413` upload too large, `422` not
+a usable F5 config, `503` busy, `504` timed out. `GET /healthz` is the health
+probe.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PORT` | `8080` | Listening port |
+| `MAX_UPLOAD_MB` | `4096` | Largest accepted upload |
+| `MAX_CONCURRENT` | `2` | Conversions at once; further requests get `503` |
+| `CONVERT_TIMEOUT_SEC` | `300` | Time limit for one conversion |
+| `UPLOAD_TIMEOUT_SEC` | `1800` | Time limit for receiving one request |
+
+
 **Full step-by-step usage, options, and troubleshooting: see the
 [package README](node/README.md)** (the same document shown on
 [npmjs.com/package/@radware/f5-to-alteon](https://www.npmjs.com/package/@radware/f5-to-alteon)).

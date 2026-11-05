@@ -20,7 +20,7 @@
     "node": ">=16"
   },
   "scripts": {
-    "test": "node --test test/golden.test.js test/unit.test.js test/extract.test.js test/newconstructs.test.js test/sample02.test.js",
+    "test": "node --test test/golden.test.js test/unit.test.js test/extract.test.js test/newconstructs.test.js test/sample02.test.js test/server.test.js",
     "prepare": "node ../tools/dev-setup.js || exit 0",
     "prepublishOnly": "npm test"
   },
