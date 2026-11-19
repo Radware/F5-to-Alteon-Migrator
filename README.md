@@ -64,7 +64,7 @@ file as the request body and get the output files back as a zip. For a
 `bigip_base.conf` + `bigip.conf` pair, concatenate them, base first:
 
 ```bash
-docker run -p 8080:8080 ghcr.io/radware/f5-to-alteon-migrator
+docker run -p 127.0.0.1:8080:8080 ghcr.io/radware/f5-to-alteon-migrator
 curl -f -X POST -T device.qkview -o result.zip localhost:8080/convert
 cat bigip_base.conf bigip.conf | curl -f -X POST -T - -o result.zip localhost:8080/convert
 ```
@@ -87,6 +87,12 @@ probe.
 | `MAX_CONCURRENT` | `2` | Conversions at once; further requests get `503` |
 | `CONVERT_TIMEOUT_SEC` | `300` | Time limit for one conversion |
 | `UPLOAD_TIMEOUT_SEC` | `1800` | Time limit for receiving one request |
+| `WORKER_HEAP_MB` | `2048` | Memory cap of one conversion; a larger config fails with an error instead of taking the service down |
+
+The service is for internal use: it has no authentication and speaks plain
+HTTP, so bind it to localhost (as above) or put it behind your own access
+control and TLS. The image is built from the default branch and tagged
+`latest`, `main` and the commit SHA (no version tags).
 
 
 **Full step-by-step usage, options, and troubleshooting: see the
@@ -127,7 +133,7 @@ deliberate bug fixes ([`DELTAS.md`](DELTAS.md)).
 
 ## How it was validated
 
-Nine rounds of live validation, documented in
+Fourteen rounds of live validation, documented in
 [`validation/VALIDATION_STATUS.md`](validation/VALIDATION_STATUS.md):
 
 - **39 real production devices** converted and staged on live Alteons
@@ -136,6 +142,13 @@ Nine rounds of live validation, documented in
   17.5 we deployed for this purpose. **Zero remaining converter defects** -
   every residual reject is environmental (platform capacity, physical ports,
   lab DHCP).
+- **Apply-level gate** on every release: each output file is staged line by
+  line AND applied on live Alteons, apply errors captured, then reverted -
+  including an all-enabled copy (F5-disabled objects turned on) and a check
+  that no config line triggers an interactive prompt (a pasted config would
+  lose the next lines). The v0.10.0 build applies with zero apply errors on
+  every field file the lab Alteons can hold (one 34,000-line device exceeds
+  the lab VA capacity and needs a larger appliance).
 - **Behavioral round-trip**: live F5 VE 17.5 and the migrated Alteon serving
   the same apps - load-balancing distribution delta 0.0%, persistence and
   health behavior identical.
@@ -146,14 +159,14 @@ Nine rounds of live validation, documented in
   serves a routed client; cross-segment traffic is redirected to the segment
   gateway (tcpdump MAC-level evidence); segment isolation holds (a segment-2
   client is NOT served by a segment-1 VIP).
-- **39 defects** found and fixed along the way (8 legacy-baseline bugs, 10
-  parser gaps, 21+ live-device findings, including one where the CLI accepted a
-  line and silently ignored it) - each locked in by a regression
-  test. The full ledger: [`DELTAS.md`](DELTAS.md).
+- **98 ledger entries** (8 legacy-baseline bugs, 10 parser gaps, 80
+  live-device and apply-level findings, a few of them device-proven features;
+  several were lines the CLI accepted and silently ignored) - each locked in
+  by a regression test. The full ledger: [`DELTAS.md`](DELTAS.md).
 
 ```bash
 cd node
-npm test     # 84 tests, all passing
+npm test     # 156 tests, all passing
 ```
 
 ## Found a problem? Please tell us

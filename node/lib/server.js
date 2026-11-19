@@ -37,10 +37,12 @@ function saveBody(req, file, maxBytes) {
   });
 }
 
-function convert(file, rdMode, timeoutMs) {
+function convert(file, rdMode, timeoutMs, workerHeapMb) {
   return new Promise((resolve, reject) => {
+    // a hostile or huge upload must fail the one conversion, not the pod
     const worker = new Worker(path.join(__dirname, 'convert-worker.js'), {
-      workerData: { file, rdMode, maxConfigBytes: MAX_CONFIG_BYTES }
+      workerData: { file, rdMode, maxConfigBytes: MAX_CONFIG_BYTES },
+      resourceLimits: { maxOldGenerationSizeMb: workerHeapMb }
     });
     const timer = setTimeout(() => {
       reject(new HttpError(504, 'conversion timed out'));
@@ -66,7 +68,7 @@ async function handleConvert(req, res, url, cfg) {
     const file = path.join(dir, 'upload');
     const size = await saveBody(req, file, cfg.maxUploadBytes);
     if (size === 0) throw new HttpError(400, 'empty upload: send the file as the request body');
-    const body = zip(await convert(file, rdMode, cfg.convertTimeoutMs));
+    const body = zip(await convert(file, rdMode, cfg.convertTimeoutMs, cfg.workerHeapMb));
     res.writeHead(200, {
       'Content-Type': 'application/zip',
       'Content-Disposition': 'attachment; filename="alteon-migration.zip"',
@@ -94,7 +96,7 @@ function sendErrorAndClose(req, res, status, message, headers) {
 }
 
 function createServer(opts) {
-  const cfg = Object.assign({ maxUploadBytes: 4096 * MB, maxConcurrent: 2, convertTimeoutMs: 300000, uploadTimeoutMs: 1800000 }, opts);
+  const cfg = Object.assign({ maxUploadBytes: 4096 * MB, maxConcurrent: 2, convertTimeoutMs: 300000, uploadTimeoutMs: 1800000, workerHeapMb: 2048 }, opts);
   let active = 0;
   const server = http.createServer(async (req, res) => {
     const started = Date.now();
@@ -111,6 +113,8 @@ function createServer(opts) {
       await handleConvert(req, res, url, cfg);
     } catch (e) {
       if (!e.status) console.error('conversion failed: ' + e.message);
+      // a failure after the response started cannot send a new status line
+      if (res.headersSent) { res.destroy(); return; }
       sendErrorAndClose(req, res, e.status || 500, e.status ? e.message : 'conversion failed');
     } finally {
       active--;
@@ -134,7 +138,8 @@ function serve() {
     maxUploadBytes: positiveEnv('MAX_UPLOAD_MB', 4096) * MB,
     maxConcurrent: positiveEnv('MAX_CONCURRENT', 2),
     convertTimeoutMs: positiveEnv('CONVERT_TIMEOUT_SEC', 300) * 1000,
-    uploadTimeoutMs: positiveEnv('UPLOAD_TIMEOUT_SEC', 1800) * 1000
+    uploadTimeoutMs: positiveEnv('UPLOAD_TIMEOUT_SEC', 1800) * 1000,
+    workerHeapMb: positiveEnv('WORKER_HEAP_MB', 2048)
   });
   server.listen(port, () => console.log('f5-to-alteon service listening on port ' + port));
   // let in-flight conversions finish when Kubernetes stops the pod

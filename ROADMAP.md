@@ -1,5 +1,10 @@
 # Roadmap
 
+> **Historical (phases 1-4 of the modernization, written July 2026).** Phase 3b
+> and much of "Phase 4" have since shipped (route domains, wildcard filters,
+> partitions, SNAT automap, VLAN restriction). Current state and next steps:
+> [HANDOFF.md](HANDOFF.md); ranked backlog: [ROADMAP-NEXT.md](ROADMAP-NEXT.md).
+
 Modernization of the F5-to-Alteon migrator. **Phases 1, 2, and the Alteon-side
 of Phase 3 are complete.** The **F5-side of validation is NOT yet done** (see
 Phase 3b). **Phase 4 is explicitly out of scope for now.**

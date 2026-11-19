@@ -60,8 +60,10 @@ Connection:Close\r\n
     group pool_web
     rport 8080
     pbind cookie insert "RDWRLAB"
-/c/slb/ssl/sslpol vs_web_tls/fessl e/convert d/backend/ssl d
-/c/slb/virt vs_web_tls/service 443 https/ssl/sslpol vs_web_tls
+/c/slb/ssl/sslpol f5ssl_fe/fessl e/convert d/backend/ssl d
+/c/slb/virt vs_web_tls/service 443 https/ssl/sslpol f5ssl_fe
+/c/slb/virt vs_web_tls/service 443 https
+    rport 8080
 /c/sys
     hprompt ena
 /c/sys/mmgmt

@@ -20,9 +20,18 @@ function normalizePort(p) {
 }
 
 // normalizePort + a diagnostic when the F5 slot prefix is not 1 (e.g. vCMP
-// "2.0" becomes "20") — the target Alteon may not have such a port, so the
+// "2.0" becomes "20") - the target Alteon may not have such a port, so the
 // mapping needs a human decision. (Live finding: 'bad port "70"'.)
+// PORTNAME-1 (apply-level sweep, probed on 34.0.12): VIPRION blade names
+// ("1/1.13") became "add 1/113", which the Alteon reads as "add 1" - it
+// answers "Port 1 added." and only then rejects "113", so a WRONG port applies.
+// Only "N" and "N.N" names have a numbering rule; anything else returns null
+// (put aside) and the caller records what was not converted.
 function mapPort(ctx, type, owner, p) {
+  if (!/^\d+(\.\d+)?$/.test(p)) {
+    ctx.warnManual(type, owner, 'F5 interface "' + p + '" has no Alteon port-number equivalent (e.g. VIPRION blade/port naming); NOT converted (put aside) - add the right Alteon port manually!');
+    return null;
+  }
   const n = normalizePort(p);
   // warn on any slot.port name except plain "1.x" (e.g. "5.0"->50, "11.0"->110):
   // the target Alteon may not have such a port number
@@ -47,6 +56,19 @@ function splitName(raw) {
   const parts = s.split('/').filter(Boolean);
   const last = parts[parts.length - 1];
   return { rd: parts[0], name: clean(last), raw: last, iapp: parts.length > 2 };
+}
+
+// NAMELEN-1: the descriptive "name" of an object has a per-menu limit
+// (probed on 34.0.12: real/group/advhc 128 characters, quotes not counted).
+// A longer value is refused with a "Usage:" line and the name is lost.
+// Within the limit the value is emitted exactly as before.
+function capName(ctx, type, owner, raw, max) {
+  const s = String(raw).trim();
+  const t = s.replace(/^"(.*)"$/s, '$1');
+  if (t.length <= max) return s;
+  ctx.warnManual(type, owner, 'F5 description is ' + t.length + ' characters; the Alteon name allows ' + max + '. Emitted the first ' + max + ' characters.',
+    'Full description: ' + t);
+  return '"' + t.slice(0, max).replace(/\\+$/, '') + '"';
 }
 
 function hcLongName(ctx, hc, owner) {
@@ -97,6 +119,19 @@ function parseReals(text, ctx) {
       if (line.startsWith('ltm node')) {
         const nm = splitName(line.replace('ltm node ', ''));
         rd = nm.rd;
+        // REALID-1: a node NAME with characters outside [A-Za-z0-9_.-] (F5
+        // allows "QA_1.2.3.4:9002") is refused on the real definition line
+        // ("Special characters are not allowed", 34.0.12) and every line of
+        // the real cascades into the wrong menu. Rename; pool members follow
+        // through ctx.realIdMap.
+        if (/[^A-Za-z0-9_.-]/.test(nm.name)) {
+          let id = nm.name.replace(/[^A-Za-z0-9_.-]/g, '_');
+          if (ctx.reals.has(id)) id += '_' + ctx.nextId('id');
+          if (!ctx.realIdMap) ctx.realIdMap = new Map();
+          ctx.realIdMap.set(nm.name, id);
+          ctx.warnManual('Real', nm.name, 'Node name has characters Alteon refuses in an ID; renamed to "' + id + '". All references were updated.');
+          nm.name = id;
+        }
         cur = { attrs: new Map() };
         ctx.reals.set(nm.name, cur);
         cur.name = nm.name;
@@ -112,12 +147,16 @@ function parseReals(text, ctx) {
           const [ip, addrRd] = addr.split('%');
           cur.rdId = addrRd;                // -> per-RD output split
           ctx.warnManual('Real', cur.name, 'Node address is in Route Domain ' + addrRd +
-            ' (' + addr + '); RD suffix stripped — see the per-route-domain output files!');
+            ' (' + addr + '); RD suffix stripped - see the per-route-domain output files!');
           addr = ip;
+        } else if (ctx.currentDefaultRd && ctx.currentDefaultRd !== '0') {
+          // PART-5: an un-suffixed address in a partition config belongs to
+          // the partition's default-route-domain (F5 omits the % there)
+          cur.rdId = ctx.currentDefaultRd;
         }
         cur.attrs.set('rip', addr);
       }
-      else if (line.startsWith('description ')) cur.attrs.set('name', line.slice(12).replace('}', ''));
+      else if (line.startsWith('description ')) cur.attrs.set('name', capName(ctx, 'Real', cur.name, line.slice(12).replace('}', ''), 128));
       else if (line.startsWith('monitor')) {
         const joined = resolveMonitorSpec(ctx, cur.name, 'Real', line.replace(/^monitor /, '').trim());
         if (joined) {
@@ -154,9 +193,9 @@ function parseReals(text, ctx) {
     }
     if (cur && cur.fqdnName && !cur.attrs.has('rip')) {
       // FQDN-defined node: no static IP to migrate, and this AlteonOS CLI has
-      // no per-real fqdn command (checked live on 34.5.7) — skip with guidance
+      // no per-real fqdn command (checked live on 34.5.7) - skip with guidance
       ctx.warnManual('Real', cur.name, 'Node is FQDN-defined (' + cur.fqdnName +
-        '); not converted — resolve it to static IP(s) or configure an Alteon FQDN/DNS-based server manually!');
+        '); not converted - resolve it to static IP(s) or configure an Alteon FQDN/DNS-based server manually!');
       ctx.reals.delete(cur.name);
       cur = null;
     }
@@ -200,8 +239,18 @@ function parseMonitors(text, ctx) {
         const idx = dest.lastIndexOf(':') >= 0 ? dest.lastIndexOf(':') : dest.lastIndexOf('.');
         if (idx > 0) {
           const ip = dest.slice(0, idx), port = dest.slice(idx + 1);
-          if (ip !== '*') hc.attrs.set('dest', ip);
-          if (port !== '*') hc.attrs.set('dport', port);
+          // HCDEST-1: advhc "dest" takes the IP version first ("dest 4 <ip>",
+          // 34.0.12); a bare address is refused with "Usage:" and the check
+          // silently probes the real instead of the F5 alias address.
+          if (ip !== '*') {
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) hc.attrs.set('dest', '4 ' + ip);
+            else {
+              ctx.warnManual('Health Check', name, 'F5 alias destination "' + dest + '" is not a plain IPv4 address; destination NOT converted - the check probes the real server. Set it manually: /c/slb/advhc/health ' + name + ' <type>, then dest 4|6 <address>, then apply.');
+            }
+          }
+          // ICMPDPORT-1: the ICMP advhc menu has no dport ("unknown command",
+          // 34.0.12); ICMP has no port, so an F5 "*.8585" alias port is moot.
+          if (port !== '*' && hc.hcType !== 'icmp') hc.attrs.set('dport', port);
         }
       } else if (line.startsWith('send ') && line !== 'send none') {
         if (['http', 'https'].includes(f5type)) parseHttpSend(line, hc, ctx, name);
@@ -219,7 +268,7 @@ function parseMonitors(text, ctx) {
         hc.attrs.set('cipher', '"' + line.slice(11) + '"'); hc.attrs.set('ssl', 'ena');
       } else if (line.startsWith('compatibility enabled') && f5type === 'https') {
         hc.attrs.set('cipher', '"ALL"');
-      } else if (line.startsWith('description ')) hc.attrs.set('name', line.slice(12));
+      } else if (line.startsWith('description ')) hc.attrs.set('name', capName(ctx, 'Health Check', name, line.slice(12), 128));
       else if (line.startsWith('username ')) hc.advtype.set('username', line.slice(9));
       else if (line.startsWith('password ')) hc.advtype.set('password', line.slice(9));
     }
@@ -278,11 +327,27 @@ function parseMonitors(text, ctx) {
       hc.advtype.delete('password');   // never emit a credential line blindly
     }
     // LIVE-16 (found at APPLY time, not staging): Alteon SMTP health checks
-    // require a username — without one the whole config refuses to apply.
+    // require a username - without one the whole config refuses to apply.
     if (hc.hcType === 'smtp' && !hc.advtype.has('username')) {
       hc.hcType = 'tcp';
       hc.advtype.clear();
-      ctx.warnManual('Health Check', name, 'F5 smtp monitor has no username; Alteon SMTP checks require one and the config would refuse to APPLY — converted as a TCP check. Configure the SMTP check manually if needed!');
+      ctx.warnManual('Health Check', name, 'F5 smtp monitor has no username; Alteon SMTP checks require one and the config would refuse to APPLY - converted as a TCP check. Configure the SMTP check manually if needed!');
+    }
+    // TCPSEND-1: the Alteon TCP advhc is connect-only - its menu has no
+    // tcp/send/expect commands ("unknown command", 34.0.12). Never emit them.
+    // F5 with "recv none" only checks that the connection opens: same check.
+    // With a recv string F5 also verified the answer - the Alteon check is
+    // weaker, so say so and give the manual step.
+    if (hc.hcType === 'tcp' && (hc.advtype.has('send') || hc.advtype.has('expect'))) {
+      const send = hc.advtype.get('send'), expect = hc.advtype.get('expect');
+      hc.advtype.delete('send'); hc.advtype.delete('expect');
+      if (expect) {
+        ctx.warnManual('Health Check', name, 'F5 tcp monitor sends ' + (send || '(nothing)') + ' and expects ' + expect +
+          '; the Alteon TCP health check only verifies that the TCP connection opens (no send/expect commands) - converted as a plain TCP check, which is WEAKER than the F5 check. ' +
+          'To verify the response, build a script-type health check manually (health check type "script" under /c/slb/advhc/health) and test it before cutover.');
+      } else {
+        ctx.warnManual('Health Check', name, 'F5 tcp monitor sends ' + send + ' with no receive string, so it only checks that the connection opens; converted as a plain TCP check (the Alteon TCP check has no send command). No action needed unless the backend requires the request.');
+      }
     }
     ctx.monitors.set(name, hc);
   }
@@ -312,7 +377,20 @@ function parseHttpSend(line, hc, ctx, name) {
       hc.advtype.set('header', (prev ? prev.replace('\\r\\n\n...', '') + '\n' : '\n') + k + ':' + v + '\\r\\n\n...');
     }
   }
-  if (method === 'POST' && sections[1]) hc.advtype.set('body', '"' + sections[1].replace(/\\r\\n"?$/, '') + '"');
+  // BODY-1: a send string ending in \r\n\r\n" left only the closing quote as
+  // the "body" and emitted body """ (refused: bad syntax, 34.0.12). Strip the
+  // closing quote; an empty body is not emitted. "body" is a paste prompt
+  // like "header": a bare "body", the body lines, then "..." (an argument is
+  // IGNORED and the next config lines are swallowed as the body - proven on
+  // 34.5.7, read back "body valid"). Single-line bodies without quotes only;
+  // anything else is put aside.
+  const body = (sections[1] || '').replace(/"\s*$/, '').replace(/(\\r\\n)+$/, '');
+  if (method === 'POST' && body) {
+    if (/"|\\r|\\n/.test(body)) {
+      ctx.warnManual('Health Check', name, 'POST body is multi-line or contains quotes and was NOT converted: ' + body +
+        ' - set it manually: /c/slb/advhc/health ' + name + ' HTTP/http, type "body", paste the body lines, end with "...", then apply.');
+    } else hc.advtype.set('body', '\n' + body + '\n...');
+  }
 }
 
 // ---------- ltm pool ----------
@@ -376,6 +454,10 @@ function parsePools(text, ctx) {
       if (m && line !== 'members {') {
         const nm = splitName(m[1]);
         memberName = nm.name;                      // "node:port"
+        const li = memberName.lastIndexOf(':');    // REALID-1: renamed node
+        if (li > 0 && ctx.realIdMap && ctx.realIdMap.has(memberName.slice(0, li))) {
+          memberName = ctx.realIdMap.get(memberName.slice(0, li)) + memberName.slice(li);
+        }
         members.set(memberName, 'health ');
         memAttrs.set(memberName, {});
         rdWarn(ctx, 'Group', name, nm.rd);
@@ -426,7 +508,7 @@ function parsePools(text, ctx) {
     }
     const pool = { attrs: new Map(), members };
     pool.attrs.set('advhc', hc); pool.attrs.set('metric', metric || 'roundrobin');
-    if (descrip) pool.attrs.set('name', descrip);
+    if (descrip) pool.attrs.set('name', capName(ctx, 'Group', name, descrip, 128));
     ctx.pools.set(name, pool);
     // priority groups -> backup group (legacy: max prio = primary, rest = backup)
     if (prio.size > 0) {
@@ -517,6 +599,30 @@ function parseProfiles(text, ctx) {
     if (profType === 'http' && block.includes('insert-xforwarded-for enabled')) {
       prof.adv.set('/http/xforward', 'ena');
     }
+    if (profType === 'ftp') {
+      const dp = block.match(/^ {4}data-port (\d+)$/m);
+      prof.dataPort = dp ? dp[1] : null;      // F5 default: 20
+    }
+    if (profType === 'client-ssl') {
+      // SSLCERT-1: the certificate the virtual presents. cert-key-chain
+      // entries (v11.5+) or the older top-level cert/key/chain lines.
+      const pick = (s, k) => { const m = s.match(new RegExp('^\\s+' + k + ' (\\S+)$', 'm')); return m && m[1] !== 'none' ? splitName(m[1]).raw : null; };
+      const ck = block.match(/^ {4}cert-key-chain \{\n([\s\S]*?)\n {4}\}/m);
+      const certs = [];
+      if (ck) {
+        for (const e of ck[1].split(/\n(?= {8}\S+ \{)/)) {
+          const c = pick(e, 'cert');
+          if (c) certs.push({ cert: c, key: pick(e, 'key'), chain: pick(e, 'chain'), passphrase: /^\s+passphrase \S/m.test(e) });
+        }
+      } else {
+        const top = block.replace(/^ {4}\S+ \{\n[\s\S]*?\n {4}\}/mg, '');
+        const c = pick(top, 'cert');
+        if (c) certs.push({ cert: c, key: pick(top, 'key'), chain: pick(top, 'chain'), passphrase: /^ {4}passphrase \S/m.test(top) });
+      }
+      if (certs.length) prof.certs = certs;
+      const df = block.match(/^ {4}defaults-from (\S+)$/m);
+      if (df && df[1] !== 'none') prof.parent = splitName(df[1]).name;
+    }
     ctx.profiles.set(nm.name, prof);
   }
 }
@@ -528,6 +634,21 @@ function parseProfiles(text, ctx) {
 //                                 net range <from> <to> include
 // A filter can then match on the class: "sip <id>" (the filter menu documents
 // sip/dip as "IP address or network class").
+// SNATPOOL-1 (apply-level sweep): a virtual's "pip mode nwclss" names a
+// network class that must exist - the device refuses the whole apply
+// otherwise ("IPv4 Network Class ID 'X' must be defined (PIP mode is set to
+// 'network class')"). Members are kept raw; render decides what converts.
+function parseSnatPools(text, ctx) {
+  for (const block of text.match(BLOCK('ltm snatpool')) || []) {
+    const hdr = block.split('\n')[0];
+    const nm = splitName(hdr.replace('ltm snatpool ', '').replace(' {', ''));
+    const mBlock = (block.match(/^ {4}members \{\n[\s\S]*?\n {4}\}/m) || [''])[0];
+    const members = mBlock.split('\n').slice(1, -1).map((l) => l.trim().replace(/\s*\{\s*\}$/, ''))
+      .filter(Boolean).map((m) => m.replace(/^\/[^/]+\//, ''));
+    ctx.snatPools.set(nm.name, members);
+  }
+}
+
 function parseAddressLists(text, ctx) {
   for (const block of text.match(BLOCK('net address-list')) || []) {
     const hdr = block.split('\n')[0];
@@ -598,7 +719,10 @@ function parsePersist(text, ctx) {
         entry = { type: ptype };
         ctx.persist.set(name, entry);
       } else if (!entry) continue;
-      else if (line.startsWith('timeout ')) entry.timeout = String(Math.floor(parseInt(line.slice(8), 10) / 60));
+      else if (line.startsWith('timeout ')) {
+        const s = parseInt(line.slice(8), 10);
+        entry.timeout = Number.isNaN(s) ? line.slice(8).trim() : String(Math.floor(s / 60));   // e.g. "indefinite"
+      }
       else if (line.startsWith('cookie-name ')) entry['cookie-name'] = line.slice(12);
       else if (line.startsWith('method ')) entry.method = line.slice(7);
       else if (line.startsWith('expiration ') && line.slice(11) !== '0') {
@@ -610,6 +734,30 @@ function parsePersist(text, ctx) {
       }
     }
   }
+}
+
+// ---------- ltm virtual-address ----------
+// VADDR-1 (field report, telco C): a virtual's destination may NAME a
+// virtual-address object ("destination /Common/crm-uxf-61:443") whose
+// "address" line holds the IP. Numeric virtual-addresses are indexed too, for
+// their "enabled no" (F5 then serves none of the virtuals on that address).
+function parseVirtualAddresses(text, ctx) {
+  for (const block of text.match(BLOCK('ltm virtual-address')) || []) {
+    const nm = splitName(block.split('\n')[0].replace('ltm virtual-address ', '').replace(' {', ''));
+    const am = block.match(/^ {4}address (\S+)$/m);
+    ctx.virtualAddresses.set(nm.raw, { address: am ? am[1] : null, enabled: !/^ {4}enabled no$/m.test(block), block });
+  }
+}
+
+// SSLCERT-1: certificates of a client-ssl profile, following defaults-from
+// when the profile lists none itself (inherit-certkeychain). An F5 built-in
+// parent that is not in the config presents F5's own default.crt.
+function sslCertsOf(ctx, pn, depth) {
+  const p = ctx.profiles.get(pn);
+  if (!p) return T.DEF_PROF[pn] === 'client-ssl' ? [{ cert: 'default.crt', key: 'default.key', chain: null, builtin: true }] : [];
+  if (p.certs) return p.certs;
+  if (p.parent && p.parent !== pn && (depth || 0) < 8) return sslCertsOf(ctx, p.parent, (depth || 0) + 1);
+  return [];
 }
 
 // ---------- ltm virtual ----------
@@ -667,12 +815,17 @@ function parseVirts(text, ctx) {
           virt.pip = new Map([['mode', 'egress']]);
           virt.automap = true;   // render fills the PIP table (floats) or warns
         } else if (line.startsWith('pool ')) {
-          let pn = splitName(line.slice(5)).name;
+          const orig = splitName(line.slice(5)).name;
+          let pn = orig;
           if (pn.length > 32) {          // live finding: nwclss IDs max 32 chars
-            const short = pn.slice(0, 28) + '_' + ctx.nextId('nwclss');
-            ctx.warnManual('Virt', name, 'SNAT pool name "' + pn + '" exceeds the 32-char Alteon ID limit; network class renamed to "' + short + '". Use that name when creating the class manually!');
-            pn = short;
+            // one id per SNAT pool, shared by every virtual that uses it
+            if (!ctx.snatPoolIds.has(orig)) ctx.snatPoolIds.set(orig, pn.slice(0, 28) + '_' + ctx.nextId('nwclss'));
+            pn = ctx.snatPoolIds.get(orig);
+            ctx.warnManual('Virt', name, 'SNAT pool name "' + orig + '" exceeds the 32-char Alteon ID limit; network class renamed to "' + pn + '".');
           }
+          // SNATPOOL-1: the class itself is emitted by render from the
+          // "ltm snatpool" members (or the pip is put aside there)
+          virt.snatPool = { name: orig, id: pn };
           virt.pip = new Map([['mode', 'nwclss'], ['nwclss v4', pn + ' persist disable']]);
         }
       }
@@ -705,6 +858,8 @@ function parseVirts(text, ctx) {
           if (rdm) virt.rd = rdm[1];        // route-domain id -> per-RD output split
           ctx.warnUnsupported('Virt', name, 'Route domain configuration in VIP listener! will omit please make sure logic retained:', dest);
           dest = dest.replace(/%[^:.]+/, '');
+        } else if (ctx.currentDefaultRd && ctx.currentDefaultRd !== '0') {
+          virt.rd = ctx.currentDefaultRd;   // PART-5: partition default RD
         }
         const idx = dest.lastIndexOf(':') >= 0 ? dest.lastIndexOf(':') : dest.lastIndexOf('.');
         let vip = dest.slice(0, idx);
@@ -719,6 +874,17 @@ function parseVirts(text, ctx) {
         // Strip the prefix back off when the remainder is a plain address.
         const pm = vip.match(/^(.+)_(\d+\.\d+\.\d+\.\d+)$/);
         if (pm && ctx.partitions && ctx.partitions.has(pm[1])) vip = pm[2];
+        // VADDR-1: a NAMED destination resolves through its virtual-address
+        // object - only to a plain IPv4 address (an RD suffix sets the RD).
+        const va = ctx.virtualAddresses.get(vip);
+        if (va && !/^\d+\.\d+\.\d+\.\d+$/.test(vip)) {
+          const am = (va.address || '').match(/^(\d+\.\d+\.\d+\.\d+)(?:%(\d+))?$/);
+          if (am) {
+            virt.vaName = vip; vip = am[1];
+            if (am[2]) { virt.rd = am[2]; }
+          }
+        }
+        if (va && !va.enabled) virt.vaDisabled = true;
         virt.vip = vip; virt.dport = dport;
         virt.aplic = dport === '1' ? 'ip' : dport === '80' ? 'http' : dport === '443' ? 'ssl' : 'basic-slb';
       } else if (line.startsWith('pool ')) {
@@ -741,6 +907,7 @@ function parseVirts(text, ctx) {
         ptype = ctx.profiles.get(pn).type;
         for (const [k, v] of ctx.profiles.get(pn).adv) virt.adv.set(k, v);
       } else if (pn in T.DEF_PROF) ptype = T.DEF_PROF[pn];
+      else if (pn === 'ftp') ptype = 'ftp';   // FTP-1: render maps it (ftp service + ftp-data)
       else if (T.NOEQUIV_PROF.has(pn)) {
         ctx.warnManual('Profile', pn, 'Built-in profile has no Alteon equivalent; virt ' + name +
           ' was converted without it. Verify behavior manually.');
@@ -750,7 +917,11 @@ function parseVirts(text, ctx) {
       else if (ptype === 'http' && virt.aplic === 'ssl') virt.aplic = 'https';
       else if (['client-ssl', 'server-ssl'].includes(ptype) && virt.aplic === 'basic-slb') virt.aplic = 'ssl';
       else if (['client-ssl', 'server-ssl'].includes(ptype) && virt.aplic === 'http') virt.aplic = 'https';
-      if (ptype === 'client-ssl') (virt.ssl = virt.ssl || {}).fe = 'ena';
+      if (ptype === 'ftp') virt.ftp = { profile: pn, dataPort: (ctx.profiles.get(pn) || {}).dataPort || '20' };
+      if (ptype === 'client-ssl') {
+        (virt.ssl = virt.ssl || {}).fe = 'ena';
+        (virt.sslCerts = virt.sslCerts || []).push({ profile: pn, certs: sslCertsOf(ctx, pn) });
+      }
       if (ptype === 'server-ssl') (virt.ssl = virt.ssl || {}).be = 'ena';
     }
     // persist
@@ -772,8 +943,16 @@ function parseVirts(text, ctx) {
     // wrong menu.
     if (virt.vip !== undefined && !virt.wildcard && !virt.vip.includes(':') &&
         !/^\d+\.\d+\.\d+\.\d+$/.test(virt.vip)) {
-      ctx.warnManual('Virt', name, 'Destination "' + virt.vip + '" is not an IP address (a named virtual-address object?); the virtual was NOT converted (put aside) - set the actual vip manually!', block);
+      const va = ctx.virtualAddresses.get(virt.vip);
+      ctx.warnManual('Virt', name, 'Destination "' + virt.vip + '" is not an IP address and ' +
+        (va ? 'its virtual-address object has address "' + (va.address || 'none') + '", which is not a plain IPv4 address' : 'no "ltm virtual-address ' + virt.vip + '" object was found in the config') +
+        '; the virtual was NOT converted (put aside) - create it manually with the real vip!', block);
       delVirt = true;
+    } else if (virt.vaDisabled && !virt.wildcard) {
+      // VADDR-1: F5 "enabled no" on the virtual-address = none of its
+      // virtuals serve traffic. Emitted disabled, so the Alteon matches.
+      virt.disable = ' ';
+      ctx.warnManual('Virt', name, 'The F5 virtual-address ' + (virt.vaName || virt.vip) + ' is DISABLED ("enabled no"), so F5 serves no traffic on it. The virtual was converted DISABLED to match. If it must carry traffic after the migration: /c/slb/virt ' + name + '/ena, then apply.');
     }
     if (!delVirt) ctx.virts.set(name, virt);
   }
@@ -795,27 +974,53 @@ function parseVlans(text, ctx) {
     // and uses 4092-4094 internally for HA/failover VLANs).
     const invalid = tag !== null && parseInt(tag, 10) > 4090;
     if (invalid) {
-      ctx.warnManual('Vlan', name, 'VLAN tag ' + tag + ' exceeds the Alteon maximum (4090); the VLAN and its self-IPs were NOT migrated. F5 uses 4092-4094 for internal HA VLANs — usually safe to drop, otherwise re-number manually!');
+      ctx.warnManual('Vlan', name, 'VLAN tag ' + tag + ' exceeds the Alteon maximum (4090); the VLAN and its self-IPs were NOT migrated. F5 uses 4092-4094 for internal HA VLANs - usually safe to drop, otherwise re-number manually!');
     }
     const ifList = [];
+    const taggedPorts = new Set();
     const im = block.match(/ {4}interfaces \{\n([\s\S]*?)\n {4}\}/);
     if (im) {
+      // VTAG-1: keep F5's per-member tagged/untagged flag (F5 default: untagged)
+      const members = [];
+      let curM = null;
       for (const raw of im[1].split('\n')) {
-        const pm = raw.trim().match(/^(\S+) \{/);
-        if (!pm) continue;
-        const port = pm[1];
+        const t = raw.trim();
+        const pm = t.match(/^(\S+) \{(.*)$/);
+        if (pm && !curM) {
+          curM = { port: pm[1], body: pm[2] };
+          if (pm[2].includes('}')) { members.push(curM); curM = null; }
+        } else if (curM) {
+          if (t === '}') { members.push(curM); curM = null; } else curM.body += ' ' + t;
+        }
+      }
+      for (const mem of members) {
+        const port = mem.port;
+        const isTagged = /(^|\s)tagged(\s|$)/.test(mem.body);
+        const before = ifList.length;
         if (ctx.trunks.has(port)) ifList.push(...ctx.trunks.get(port).members);
         else if (ctx.lacp.has(port)) ifList.push(...ctx.lacp.get(port).port);
-        else ifList.push(mapPort(ctx, 'Vlan', name, port));
+        else if (ctx.trunksAside && ctx.trunksAside.has(port)) {
+          ctx.warnManual('Vlan', name, 'Member trunk "' + port + '" was put aside (' + ctx.trunksAside.get(port) + '); the VLAN was migrated WITHOUT its ports - add the Alteon ports manually!');
+        } else {
+          const mp = mapPort(ctx, 'Vlan', name, port);
+          if (mp !== null) ifList.push(mp);
+        }
+        if (isTagged) for (const p of ifList.slice(before)) taggedPorts.add(String(p));
       }
-    } else ifList.push('1');
+    } else {
+      // VCMP-1 (apply-level sweep): no interfaces block (vCMP guest - the host
+      // owns the ports - or an unassigned VLAN). The legacy tool guessed port
+      // 1, which put every such VLAN on one port and broke trunk PVIDs at apply.
+      // An enabled VLAN with no ports applies (probed on 34.0.12).
+      ctx.warnManual('Vlan', name, 'F5 VLAN has no interfaces (vCMP guest, or not assigned to a port); migrated WITHOUT ports - add the Alteon ports manually ("/c/l2/vlan ' + (tag || '<id>') + '/add <port>")!');
+    }
     // live finding: an unresolved trunk/interface NAME leaked into "add" and
     // the device rejected it ('bad port "trunk_sync_vcmp"')
     const numeric = ifList.filter(p => /^\d+$/.test(p));
     for (const bad of ifList.filter(p => !/^\d+$/.test(p))) {
-      ctx.warnManual('Vlan', name, 'Interface "' + bad + '" could not be mapped to a numeric Alteon port (unresolved trunk?); dropped from the VLAN — add manually!');
+      ctx.warnManual('Vlan', name, 'Interface "' + bad + '" could not be mapped to a numeric Alteon port (unresolved trunk?); dropped from the VLAN - add manually!');
     }
-    ctx.vlans.set(name, { tag, interfaces: numeric, invalid });
+    ctx.vlans.set(name, { tag, interfaces: numeric, tagged: new Set(numeric.filter((p) => taggedPorts.has(String(p)))), invalid });
   }
 }
 
@@ -836,12 +1041,14 @@ function parseSelfIps(text, ctx) {
       } else if (line.startsWith('address ')) {
         const [ip, pfx] = line.slice(8).split('/');
         addr = ip; mask = T.prefixToMask(pfx);
-        if (addr.includes('%')) {         // route-domain suffix — see node handling
+        if (addr.includes('%')) {         // route-domain suffix - see node handling
           const [bare, selfRd] = addr.split('%');
           rdId = selfRd;                    // -> per-RD output split
           ctx.warnManual('L3 Interface', name || bare, 'Self-IP is in Route Domain ' + selfRd +
-            ' (' + addr + '); RD suffix stripped — see the per-route-domain output files!');
+            ' (' + addr + '); RD suffix stripped - see the per-route-domain output files!');
           addr = bare;
+        } else if (ctx.currentDefaultRd && ctx.currentDefaultRd !== '0') {
+          rdId = ctx.currentDefaultRd;      // PART-5: partition default RD
         }
       } else if (line.startsWith('vlan ')) {
         const vn = splitName(line.slice(5)).name;
@@ -858,7 +1065,7 @@ function parseSelfIps(text, ctx) {
     if (!name || !addr) continue;
     if (onInvalidVlan) {
       ctx.warnManual('L3 Interface', name,
-        'Self-IP sits on VLAN ' + vlanTag + ' (>4090, not migrated); interface skipped — see the VLAN diagnostic.');
+        'Self-IP sits on VLAN ' + vlanTag + ' (>4090, not migrated); interface skipped - see the VLAN diagnostic.');
       continue;
     }
     if (isLocal) {
@@ -894,7 +1101,7 @@ function parseRoutes(text, ctx) {
       else if (line.startsWith('network ')) {
         net = line.split(/\s+/)[1];
         // RD-scoped routes ("default%1", "10.10.0.0%1/16") are the per-route-domain
-        // default gateways/routes — carry the RD instead of dropping the route, so
+        // default gateways/routes - carry the RD instead of dropping the route, so
         // segment mode can build the redirect-filter gateway and split mode can
         // place the route in the right per-RD output.
         const rdm = net.match(/^([^%\/]+)%(\d+)(\/\d+)?$/);
@@ -917,7 +1124,9 @@ function parseRoutes(text, ctx) {
       }
     }
     if (pool) continue;
-    let routeRd = netRd || '0';
+    // PART-5: an un-suffixed route in a partition config belongs to the
+    // partition's default-route-domain (explicit %RD on network/gw wins)
+    let routeRd = netRd || ((ctx.currentDefaultRd && ctx.currentDefaultRd !== '0' && !(gw || '').includes('%')) ? ctx.currentDefaultRd : '0');
     if (gw && gw.includes('%')) {         // route-domain suffix on the gateway
       const [bare, gwRd] = gw.split('%');
       gw = bare;
@@ -935,11 +1144,11 @@ function parseRoutes(text, ctx) {
       if (!netRd) {
         routeRd = gwRd;
         ctx.warnManual('Route', net || 'N/A', 'Route gateway is in Route Domain ' + gwRd +
-          ' (' + gw + '%' + gwRd + '); RD suffix stripped — see the per-route-domain output files!');
+          ' (' + gw + '%' + gwRd + '); RD suffix stripped - see the per-route-domain output files!');
       }
     }
     if (!/^\d+\.\d+\.\d+\.\d+$/.test(gw || '')) {           // live finding: "bad gateway IP address null"
-      ctx.warnManual('Route', net || 'N/A', 'Route has no usable IPv4 gateway ("' + gw + '"); skipped — address manually!');
+      ctx.warnManual('Route', net || 'N/A', 'Route has no usable IPv4 gateway ("' + gw + '"); skipped - address manually!');
       continue;
     }
     // ROUTE-1 dedup (field report): F5 configs carry several route objects
@@ -988,8 +1197,27 @@ function parseTrunks(text, ctx) {
     const tname = block.split('\n')[0].replace('net trunk ', '').replace(' {', '');
     const im = block.match(/interfaces \{\n([\s\S]*?)\}/);
     if (!im) continue;
-    const members = im[1].split('\n').map(s => s.trim()).filter(Boolean)
-      .map(m => mapPort(ctx, 'Trunk', tname, m));
+    // VCMP-1: "type ha-only" appears only on vCMP guests (platform Z101 in
+    // every field config seen): the guest's read-only view of a HOST trunk,
+    // named with the host's ports. Emitting it builds a trunk from ports the
+    // guest does not own (apply refused: "Trunk group 2 contains ports with
+    // different PVIDs" / "contains no ports but is enabled").
+    if (/^\s+type ha-only/m.test(block)) {
+      ctx.trunksAside = ctx.trunksAside || new Map();
+      ctx.trunksAside.set(tname, 'vCMP guest view of a host trunk');
+      ctx.warnManual('Trunk', tname, 'F5 "type ha-only" trunk (vCMP guest view of a host trunk); NOT converted (put aside) - build the Alteon trunk from the physical cabling of the target!');
+      continue;
+    }
+    const raw = im[1].split('\n').map(s => s.trim()).filter(Boolean);
+    const members = raw.map(m => mapPort(ctx, 'Trunk', tname, m));
+    // PORTNAME-1: a trunk with any unmappable member is put aside whole - a
+    // partial trunk would apply with fewer links than the F5 had.
+    if (members.some(m => m === null)) {
+      ctx.trunksAside = ctx.trunksAside || new Map();
+      ctx.trunksAside.set(tname, 'member interface without an Alteon port number');
+      ctx.warnManual('Trunk', tname, 'Trunk members ' + raw.join(', ') + ' cannot all be mapped to Alteon ports; trunk NOT converted (put aside) - create it manually!');
+      continue;
+    }
     if (block.includes('lacp enabled')) ctx.lacp.set(tname, { lacpId: ctx.nextId('lacp'), port: members });
     else ctx.trunks.set(tname, { trunkId: ctx.nextId('trunk'), members, name: tname });
   }
@@ -1005,7 +1233,7 @@ function parseSystem(text, ctx) {
     ctx.mgmt.mmgmt.set('mask', T.prefixToMask(pfx) || pfx);
   }
   if (/^sys management-dhcp/m.test(text)) ctx.mgmt.mmgmt.set('dhcp', 'ena');
-  // management routes — FIX BUG-5: parse ALL of them (legacy skipped the last)
+  // management routes - FIX BUG-5: parse ALL of them (legacy skipped the last)
   for (const block of text.match(BLOCK('sys management-route')) || []) {
     let gw = null, isDefault = false, net = null;
     for (const raw of block.split('\n')) {
@@ -1019,18 +1247,18 @@ function parseSystem(text, ctx) {
     if (isDefault && gw) ctx.mgmt.mmgmt.set('gw', gw);
     else if (gw) ctx.warnManual('Route', 'N/A', 'Management routes are not supported by Alteon! \n line: ' + net + ' ' + gw);
   }
-  // ntp — FIX BUG-4: legacy crashed (undefined var) on the first line and
+  // ntp - FIX BUG-4: legacy crashed (undefined var) on the first line and
   // silently dropped the whole NTP config
   const ntpBlock = text.match(/^sys ntp \{\n([\s\S]*?)^\}/m);
   if (ntpBlock) {
     const sm = ntpBlock[1].match(/servers \{([^}]*)\}/);
     if (sm) {
       // live finding: Alteon prisrv/secsrv take IPs only ('bad Primary NTP
-      // server "ntp.corp-internal.local"') — hostnames need manual resolution
+      // server "ntp.corp-internal.local"') - hostnames need manual resolution
       const servers = sm[1].trim().split(/\s+/).filter(Boolean);
       const byIp = servers.filter(s => /^[\d.]+$/.test(s) || s.includes(':'));
       for (const h of servers.filter(s => !byIp.includes(s))) {
-        ctx.warnManual('NTP', h, 'NTP server is a hostname; Alteon needs an IP — resolve and set manually!');
+        ctx.warnManual('NTP', h, 'NTP server is a hostname; Alteon needs an IP - resolve and set manually!');
       }
       if (byIp[0]) ctx.mgmt.ntp.set('prisrv', byIp[0]);
       if (byIp[1]) ctx.mgmt.ntp.set('secsrv', byIp[1]);
@@ -1049,8 +1277,18 @@ function parseSystem(text, ctx) {
     const re = /(\S+) \{\n\s*host (\S+)(?:\n\s*remote-port (\d+))?[\s\S]*?\}/g;
     let m;
     while ((m = re.exec(sysBlock[1])) && c < 5) {
+      // SYSLOG-1: remote-port may follow local-ip, so search the whole entry
+      const pm = m[0].match(/^\s*remote-port (\d+)$/m);
+      const host = m[2], port = pm ? pm[1] : '514', sname = m[1].split('/').pop();
+      // two F5 entries to the same host:port refuse the whole apply on
+      // Alteon ("Configured Duplicate Syslog Server with same IP", 34.0.12)
+      const dup = [...ctx.mgmt.syslog.values()].find((s) => s.host === host && s.port === port);
+      if (dup) {
+        ctx.warnManual('Syslog', sname, 'F5 remote syslog server ' + sname + ' sends to ' + host + ':' + port + ', the same destination as ' + dup.name + '. Alteon refuses duplicate syslog servers at apply, so it was emitted once.');
+        continue;
+      }
       c += 1;
-      ctx.mgmt.syslog.set(c, { host: m[2], port: m[3] || '514' });
+      ctx.mgmt.syslog.set(c, { host, port, name: sname });
     }
   }
   // snmp
@@ -1086,7 +1324,9 @@ function parseAll(text, ctx) {
   parseProfiles(text, ctx);
   parsePersist(text, ctx);
   parseAddressLists(text, ctx);   // network classes (referenced by filters)
+  parseSnatPools(text, ctx);      // network classes (referenced by pip nwclss)
   parseTmc(text, ctx);            // source-match criteria (before virts)
+  parseVirtualAddresses(text, ctx); // named destinations (before virts)
   parseVirts(text, ctx);
   parseSystem(text, ctx);
   parseRoutes(text, ctx);

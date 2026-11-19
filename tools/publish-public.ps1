@@ -11,7 +11,8 @@
     1. refuses to run with uncommitted changes,
     2. scans the tree for customer names, credentials and secrets,
     3. runs the full test suite,
-    4. creates a single snapshot commit on top of the public branch,
+    4. creates a single snapshot commit on top of the public branch, with the
+       private/ folder (lab credentials, customer context) removed,
     5. pushes it, and optionally publishes the npm package.
 
   A pre-push hook (.githooks/pre-push) blocks any direct push to the public
@@ -26,7 +27,8 @@
 param(
   [string]$Message = "",
   [switch]$Npm,          # also run npm publish
-  [switch]$DryRun        # run every check, push nothing
+  [switch]$DryRun,       # run every check, push nothing
+  [switch]$AllowPublicOverwrite   # discard public-only changes on purpose (see tools/public-drift.js)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,17 +61,49 @@ if ($testFailed) { Fail "tests failed. Nothing was pushed." }
 
 # --- 4. build the snapshot commit -------------------------------------------
 Step 4 "Building the sanitized snapshot"
+# Under 'Stop', PowerShell 5.1 turns ANY stderr line of a native command into a
+# terminating error - and git fetch writes its progress to stderr whenever
+# there is something new (e.g. a contributor merge on the public repo), which
+# aborted step 4 with no message. Check the exit code instead.
+$ErrorActionPreference = 'Continue'
 git fetch radware 2>&1 | Out-Null
-$parent = (git rev-parse radware/main 2>$null)
-$tree = (git rev-parse "HEAD^{tree}")
+$fetchFailed = $LASTEXITCODE -ne 0
+$parent = (git rev-parse --verify --quiet radware/main 2>$null)   # empty on a first-ever publish
+$ErrorActionPreference = 'Stop'
+if ($fetchFailed) { Fail "git fetch radware failed (network/VPN?). Nothing was pushed." }
+# Collaborators may merge directly on the public repo. This release replaces
+# the public tree, so refuse if it would erase public-only work.
+if (-not $AllowPublicOverwrite) {
+  node tools/public-drift.js
+  if ($LASTEXITCODE -ne 0) { Fail "the public repo has changes that are not in the private repo (listed above). Nothing was pushed. Use -AllowPublicOverwrite only to discard them on purpose." }
+}
+# private/ (lab credentials, customer context, people) never leaves the dev
+# repo: build the snapshot tree from a throwaway index with it removed, so the
+# real index and working tree are untouched.
+$tmpIndex = Join-Path ([IO.Path]::GetTempPath()) ("f5pub-" + [guid]::NewGuid().ToString() + ".idx")
+$env:GIT_INDEX_FILE = $tmpIndex
+try {
+  git read-tree HEAD
+  git rm -r -q --cached --ignore-unmatch -- private | Out-Null
+  $tree = (git write-tree).Trim()
+} finally {
+  Remove-Item Env:\GIT_INDEX_FILE -ErrorAction SilentlyContinue
+  Remove-Item $tmpIndex -Force -ErrorAction SilentlyContinue
+}
+if (-not $tree) { Fail "could not build the snapshot tree." }
+$leaked = git ls-tree -r --name-only $tree | Where-Object { $_ -like 'private/*' }
+if ($leaked) { Fail "the snapshot tree still contains private/ files - nothing was pushed." }
+Write-Host "      private/ excluded from the snapshot"
 if (-not $Message) {
   $version = (Get-Content node/package.json | ConvertFrom-Json).version
   $Message = "Update: F5-to-Alteon Migrator v$version"
 }
 # -m (not a pipe): piping a PowerShell string into git prepends a UTF-8 BOM,
 # which then shows up at the start of the published commit message.
-if ($parent) { $commit = (git commit-tree $tree -p $parent -m $Message) }
-else         { $commit = (git commit-tree $tree -m $Message) }
+# The Source-Commit trailer lets tools/public-drift.js find this snapshot later.
+$source = "Source-Commit: " + (git rev-parse HEAD).Trim()
+if ($parent) { $commit = (git commit-tree $tree -p $parent -m $Message -m $source) }
+else         { $commit = (git commit-tree $tree -m $Message -m $source) }
 $commit = $commit.Trim()
 Write-Host "      snapshot commit: $commit"
 Write-Host "      message:         $Message"

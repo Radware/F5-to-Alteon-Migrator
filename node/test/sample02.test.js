@@ -24,7 +24,9 @@ test('sample02 conversion carries the behaviorally-relevant constructs', () => {
   assert.match(res.output, /\/c\/slb\/real web2\n {4}ena\n {4}rip 10\.42\.1\.12\n {4}maxcon 500 physical\n/);
   assert.match(res.output, /health mon_web/);
   assert.match(res.output, /pbind cookie insert "RDWRLAB"\n/);   // LIVE-8: no trailing "10 10"
-  assert.match(res.output, /\/c\/slb\/virt vs_web_tls\/service 443 https\/ssl\/sslpol vs_web_tls/);
+  // SSLPOL-1: one shared policy per fessl/backend combination; RPORT-1: the
+  // member port is set again after the policy (the device rewrites 443 to 80)
+  assert.match(res.output, /\/c\/slb\/virt vs_web_tls\/service 443 https\/ssl\/sslpol f5ssl_fe\n\/c\/slb\/virt vs_web_tls\/service 443 https\n {4}rport 8080\n/);
   // sample02 has NO floating self-IPs -> automap is PUT ASIDE, not half-emitted
   // (pip mode egress without a Proxy IP applies cleanly but silently does not
   // NAT - verified live), and the log carries the full manual recipe

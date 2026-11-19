@@ -31,7 +31,9 @@ test('diff vs legacy golden contains ONLY the documented bug-fix deltas', () => 
   //  BUG-3 metric fix; BUG-4 NTP restored; BUG-5 mgmt gw restored;
   //  BUG-6 static route syntax (live-validated); BUG-7 numeric VLAN ports
   //  (live-validated); BUG-8 drain mode -> dis (live-validated: legacy's
-  //  "shut psession" is an interactive command, invalid in offline config)
+  //  "shut psession" is an interactive command, invalid in offline config);
+  //  PVIDP-1 port pvid before the VLAN add (paste-safe, no PVID prompt),
+  //  then the access port leaves default VLAN 1
   assert.deepStrictEqual(added.sort(), [
     '    add 1',
     '    add 2',
@@ -39,9 +41,16 @@ test('diff vs legacy golden contains ONLY the documented bug-fix deltas', () => 
     '    gw 192.168.1.1',
     '    metric roundrobin',
     '    prisrv 10.0.0.10',
+    '    pvid 10',
+    '    pvid 20',
+    '    rem 1',
+    '    rem 2',
     '    secsrv 10.0.0.11',
     '    tzone -04:00',
-    '/c/l3/route/ip4/add 10.10.30.0 255.255.255.0 10.10.20.1'
+    '/c/l2/vlan 1',
+    '/c/l3/route/ip4/add 10.10.30.0 255.255.255.0 10.10.20.1',
+    '/c/port 1',
+    '/c/port 2'
   ]);
   assert.deepStrictEqual(removed.sort(), [
     '    add 1.1',

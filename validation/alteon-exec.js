@@ -9,13 +9,28 @@
 //
 // commands.txt: one CLI line per line; '#' comments and blanks skipped.
 // Prompts are answered automatically (login note, action confirms, pager).
+// PASTE_SIM=1: only the login note is answered (see below).
 const fs = require('fs');
 const { Client } = require('ssh2');
 const [host, user, pass, cmdFile, outFile] = process.argv.slice(2);
 if (!cmdFile) { console.error('usage: node alteon-exec.js <host> <user> <pass> <commands.txt> [transcript.txt]'); process.exit(2); }
-const FORBIDDEN = /^(save|boot|reset|shutdown)\b/i;
+// Block save/boot/reset/shutdown typed bare OR as a menu path ("/boot/reset"
+// started with "/" and slipped past the old pattern). A lab reboot is allowed
+// only as the exact line "/boot/reset" with ALLOW_REBOOT=1 (owner's standing
+// OK for the lab device, 2026-11-17): the device keeps stale VLAN entries that
+// revert / revert apply do not clear (SEGVLAN-1) - only a reboot does, and
+// since nothing is ever saved it comes back with its flash config.
+const FORBIDDEN = /^\/?(save|boot|reset|shutdown)\b|^\/(boot|maint)\b|\/(save|reset|shutdown)\s*$/i;
+const REBOOT_OK = process.env.ALLOW_REBOOT === '1';
 // generic: any y/n or action-confirm prompt (incl. the ", n to skip it" re-prompt variant)
-const CONFIRM_RE = /(Confirm seeing above note \[y\]:|y to perform the action[^\n]*:|\[y\/n\][^\n]*:)\s*$/;
+// PASTE_SIM=1 answers only the login note and leaves every y/n prompt to the
+// next command line, the way a pasted config meets it (PROMPT-1: a prompt
+// swallows the following lines; this is how VTAG-1/PVIDP-1/BODY-1 were probed).
+const PASTE_SIM = process.env.PASTE_SIM === '1';
+const CONFIRM_RE = PASTE_SIM
+  ? /(Confirm seeing above note \[y\]:)\s*$/
+  : /(Confirm seeing above note \[y\]:|y to perform the action[^\n]*:|\[y\/n\][^\n]*:)\s*$/;
+const YN_RE = /\[y\/n\][^\n]*:\s*$/;
 const PAGER_RE = /Press q to quit, any other key to continue\s*$/;
 const PROMPT_RE = /^>> [^\n]*#\s*$/m;
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
@@ -39,7 +54,7 @@ function send(resending) {
     current = queue.shift();
     retried = false;
   }
-  if (FORBIDDEN.test(current)) { console.log('SKIPPED (forbidden): ' + current); return send(); }
+  if (FORBIDDEN.test(current) && !(REBOOT_OK && current.trim() === '/boot/reset')) { console.log('SKIPPED (forbidden): ' + current); return send(); }
   transcript += '\n>>> ' + current + (resending ? ' (RESEND)' : '') + '\n';
   console.log('### ' + current + (resending ? '  (resend)' : ''));
   buf = '';
@@ -68,6 +83,7 @@ function onData(d) {
   const clean = stripAnsi(buf);
   if (PAGER_RE.test(clean)) { buf = ''; stream.write(' '); armIdle(); return; }
   if (CONFIRM_RE.test(clean)) { transcript += '\n>>> y (auto)\n'; buf = ''; stream.write('y\n'); armIdle(); return; }
+  if (PASTE_SIM && YN_RE.test(clean)) { clearTimeout(idle); idle = setTimeout(() => { const r = buf; buf = ''; onResponse(r); }, 600); return; }
   if (PROMPT_RE.test(stripAnsi(buf.slice(-160)))) {
     // prompt seen: wait a settle window for any trailing output before
     // sending the next line (racing the echo corrupts input)

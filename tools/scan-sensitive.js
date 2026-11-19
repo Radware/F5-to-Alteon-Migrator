@@ -20,6 +20,12 @@ const PATTERNS = [
   [/\bclayton\b/i, 'customer site name'],
   [/\bst ?leonards\b/i, 'customer site name'],
   [/\bnsp[a-z]{3}\d{4}[a-z]{2}\d{2}\b/i, 'customer device hostname'],
+  [/\bip ?telecom\b/i, 'customer name (telco B)'],
+  [/\bxl ?smart\b/i, 'customer name (telco C)'],
+  [/\bcloudsolutions\b/i, 'customer domain'],
+  [/\bADC-BIG4K-/i, 'customer device hostname'],
+  [/\bpra\.pt\b/i, 'customer domain'],
+  [/\brtcs\.local\b/i, 'customer internal domain'],
   // credentials / secrets
   [/radware5\?/, 'lab VM password'],
   [/Rdwr-F5lab/i, 'lab F5 password'],
@@ -50,6 +56,10 @@ const hits = [];
 for (const f of files) {
   if (SKIP.has(f)) continue;
   if (/^(validation\/node_modules|node\/node_modules)\//.test(f)) continue;
+  // private/ is stripped from the public snapshot by publish-public.ps1 (and
+  // that script fails if the built tree still contains it), so it may hold
+  // lab credentials and customer context
+  if (/^private\//.test(f)) continue;
   let text;
   try {
     const buf = fs.readFileSync(f);

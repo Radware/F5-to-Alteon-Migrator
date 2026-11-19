@@ -27,6 +27,11 @@ class Context {
     this.counters = new Map();
     this.addrLists = new Map();  // net address-list -> Alteon network class
     this.tmc = new Map();        // ltm traffic-matching-criteria
+    this.snatPools = new Map();  // ltm snatpool name -> [member address]
+    this.snatPoolIds = new Map(); // snatpool name -> shortened network class id
+    this.virtualAddresses = new Map(); // ltm virtual-address name -> {address, enabled}
+    this.certIds = new Map();    // F5 certificate name -> Alteon certificate id
+    this.sslPolIds = new Map();  // fessl+backend|chain -> shared SSL policy id (SSLPOL-1)
     this.usedNwclss = new Set(); // network classes actually referenced by output
     this.rdVlans = new Map();    // vlan name -> route-domain id (net route-domain)
     this.rdInfo = new Map();     // route-domain id -> description

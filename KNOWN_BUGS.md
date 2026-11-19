@@ -1,5 +1,11 @@
 # Known bugs found while capturing the Phase 1 baseline
 
+> **Historical.** These are defects of the LEGACY Python tool, found in
+> Phase 1. All are fixed in the Node tool (BUG-1..8 in [DELTAS.md](DELTAS.md));
+> the `f5alteon` Python package mentioned below was superseded by `node/`.
+> Current open problems live in [HANDOFF.md](HANDOFF.md) and
+> [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md).
+
 These are real defects in the current tool, surfaced immediately by running
 it against a representative config. They are documented here (not yet fixed)
 so they can be fixed deliberately during the refactor, each with a regression

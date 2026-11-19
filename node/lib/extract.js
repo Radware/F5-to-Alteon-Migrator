@@ -188,7 +188,9 @@ async function resolveInput(file, opts) {
   }
   for (const p of partitions.sort()) {
     for (const f of ['config/partitions/' + p + '/bigip_base.conf', 'config/partitions/' + p + '/bigip.conf']) {
-      if (res.found[f]) out.push({ label: file + ' -> ' + f, text: res.found[f] });
+      // PART-5: the partition tag lets the parser apply the partition's
+      // default-route-domain to un-suffixed addresses in THIS source
+      if (res.found[f]) out.push({ label: file + ' -> ' + f, text: res.found[f], partition: p });
     }
   }
   if (partitions.length) {

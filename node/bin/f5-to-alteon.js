@@ -124,7 +124,7 @@ async function convertOne(inputs, dir, label) {
   const texts = [], partitions = [];
   for (const f of inputs) {
     const resolved = await resolveInput(f);
-    for (const s of resolved) texts.push(s.text);
+    for (const s of resolved) texts.push({ text: s.text, partition: s.partition || null });
     for (const p of resolved.partitions || []) if (!partitions.includes(p)) partitions.push(p);
     for (const n of resolved.notes || []) console.log('  NOTE: ' + n);
   }
@@ -159,7 +159,7 @@ async function convertOne(inputs, dir, label) {
     const texts = [], partitions = [];
     for (const f of files) {
       const resolved = await resolveInput(f);
-      for (const s of resolved) texts.push(s.text);
+      for (const s of resolved) texts.push({ text: s.text, partition: s.partition || null });
       for (const p of resolved.partitions || []) if (!partitions.includes(p)) partitions.push(p);
     }
     const res = migrate(texts, { rdMode, partitions });

@@ -28,7 +28,7 @@ const LOG2_BANNER = `
  * @param {string[]} texts - contents of bigip.conf / bigip_base.conf (any order)
  * @returns {{output: string, log1: string, log2: string, diagnostics: object[]}}
  */
-// Alteon IDs (real/group/virt names) are limited to 32 characters — longer
+// Alteon IDs (real/group/virt names) are limited to 32 characters - longer
 // names make the CLI reject the definition line and every line after it
 // cascades into the wrong menu (found live: 1,400+ long names across two
 // production fleets). Rename deterministically and fix every reference.
@@ -46,7 +46,7 @@ function shortenIds(ctx) {
   const realRen = new Map();
   for (const [k, v] of [...ctx.reals]) {
     if (!v.attrs.has('rip')) {
-      ctx.warnManual('Real', k, 'Node has no usable IP address; real skipped — resolve manually!');
+      ctx.warnManual('Real', k, 'Node has no usable IP address; real skipped - resolve manually!');
       ctx.reals.delete(k);
       continue;
     }
@@ -82,7 +82,7 @@ function shortenIds(ctx) {
     for (const mk of [...v.members.keys()]) {
       if (!ctx.reals.has(mk.split(':')[0])) {
         v.members.delete(mk);
-        ctx.warnManual('Group', pk, 'Member ' + mk + ' has no migrated real server (skipped/unresolvable node); removed from the group — verify!');
+        ctx.warnManual('Group', pk, 'Member ' + mk + ' has no migrated real server (skipped/unresolvable node); removed from the group - verify!');
       }
     }
   }
@@ -132,7 +132,7 @@ function splitByRouteDomain(ctx) {
     else if (poolRd.get(gn) !== vrd) {
       ctx.warnManual('Virt', vk, 'Virtual is in route domain ' + vrd + ' but group ' + gn +
         ' has members in route domain ' + poolRd.get(gn) + '; the group is emitted in the RD' +
-        poolRd.get(gn) + ' output — verify which instance should own this service!');
+        poolRd.get(gn) + ' output - verify which instance should own this service!');
     }
   }
   for (const [pk, rd] of poolRd) if (rd === null) poolRd.set(pk, '0');
@@ -144,7 +144,7 @@ function splitByRouteDomain(ctx) {
     const prev = seenIp.get(ip);
     if (prev && prev.rd !== rd) {
       ctx.warnManual('RouteDomain', ip, 'IP ' + ip + ' exists in BOTH route domain ' + prev.rd +
-        ' (' + prev.what + ') and ' + rd + ' (' + what + ') — overlapping address space; these RDs MUST stay on separate Alteon instances!');
+        ' (' + prev.what + ') and ' + rd + ' (' + what + ') - overlapping address space; these RDs MUST stay on separate Alteon instances!');
     } else if (!prev) seenIp.set(ip, { rd, what });
   };
   for (const [k, r] of ctx.reals) track(r.attrs.get('rip'), r.rdId || '0', 'real ' + k);
@@ -187,8 +187,39 @@ function splitByRouteDomain(ctx) {
     sub.gws = new Map([...ctx.gws].filter(([, g]) => (g.rdId || '0') === id));
     partitions.set(id, sub);
   }
+  // SPLIT-2 (found by the APPLY-level gate): a reference that crosses two
+  // per-RD outputs is an apply-blocker on the target instance ("Real server
+  // X is not configured", group not found). After the split each RD is a
+  // separate Alteon: remove cross-RD members and backup refs, and PUT ASIDE
+  // virtuals whose group (and backends) live in another output.
+  for (const [id, sub] of partitions) {
+    for (const [pk, p] of [...sub.pools]) {
+      for (const mk of [...p.members.keys()]) {
+        const rn = mk.split(':')[0];
+        if (!sub.reals.has(rn)) {
+          p.members.delete(mk);
+          ctx.warnManual('Group', pk, 'Member ' + rn + ' is emitted in a DIFFERENT route-domain output (a separate Alteon instance after the split); removed from this group - the device otherwise refuses the whole apply ("Real server ... is not configured"). Reach that backend via a local equivalent or an inter-instance path!');
+        }
+      }
+      if (p.attrs.has('backup') && !sub.pools.has(p.attrs.get('backup').slice(1))) {
+        ctx.warnManual('Group', pk, 'Backup group ' + p.attrs.get('backup').slice(1) + ' is emitted in a different route-domain output; backup reference removed - configure a local backup manually!');
+        p.attrs.delete('backup');
+      }
+      if (!p.members.size) {
+        sub.pools.delete(pk);
+        ctx.warnManual('Group', pk, 'ALL members of this group belong to other route-domain outputs; the group was NOT emitted in the RD' + id + ' output.');
+      }
+    }
+    for (const [vk, v] of [...sub.virts]) {
+      const gn = v.service.get('group');
+      if (gn && !sub.pools.has(gn) && ctx.pools.has(gn)) {
+        sub.virts.delete(vk);
+        ctx.warnManual('Virt', vk, 'Virtual is in route domain ' + id + ' but its group ' + gn + ' (and its backends) belong to a different route domain - separate Alteon instances after the split. NOT converted (put aside): decide which instance owns this service, then add local backends or an inter-instance path!');
+      }
+    }
+  }
   ctx.warnManual('RouteDomain', 'split', 'Config uses ' + (ids.size - 1) + ' non-default route domain(s); ' +
-    'output was SPLIT per route domain — deploy each _rdN file on its own Alteon instance (vADC or separate VA). ' +
+    'output was SPLIT per route domain - deploy each _rdN file on its own Alteon instance (vADC or separate VA). ' +
     'Alteon has one routing table per instance.');
   return partitions;
 }
@@ -197,7 +228,7 @@ function splitByRouteDomain(ctx) {
 // spaces do NOT overlap, all RDs can live on ONE Alteon as segments
 // (/c/slb/segment): each segment binds the RD's VLANs + virtuals, and a
 // redirect filter forces cross-segment traffic through the RD's gateway
-// (typically the firewall) — same isolation intent as F5 RDs, one device.
+// (typically the firewall) - same isolation intent as F5 RDs, one device.
 // Overlapping address space still requires the per-RD split (segments share
 // one routing table).
 // network address of ip/mask as a comparable string ('' when not computable)
@@ -215,7 +246,7 @@ function buildSegments(ctx) {
   if (!ids.size) return false;
   // overlap check (same test as the split path). Covers EVERY address class
   // that must be unique on one Alteon: reals, VIPs, interface/self IPs,
-  // floating IPs and gateways — F5 allows the same IP in two route domains,
+  // floating IPs and gateways - F5 allows the same IP in two route domains,
   // Alteon rejects the duplicate at apply, so any cross-RD duplicate forces
   // the per-RD split (separate instances) instead of segmentation.
   const seen = new Map();
@@ -234,6 +265,25 @@ function buildSegments(ctx) {
   // non-identical IPs in one subnet across RDs force the split.
   for (const [, i] of ctx.ifs) check(subnetKey(i.addr, i.mask), i.rdId || '0');
   if (overlap) return false;
+  // SEGPORT-1: each segment's redirect filter must be added to the ports of
+  // its VLANs or the device refuses the whole apply ("Segment 1 - filter 1800
+  // is not added to the port(s) in VLAN 23", clean 34.0.12). A vCMP guest's
+  // config names no physical ports, so the binding cannot be emitted - use the
+  // per-RD split (proven) instead of an output that cannot apply.
+  const portless = [];
+  for (const id of ids) {
+    let hasPort = false;
+    for (const [vn, rdId] of ctx.rdVlans) {
+      if (rdId !== id || !ctx.vlans.has(vn) || ctx.vlans.get(vn).invalid) continue;
+      if (ctx.vlans.get(vn).interfaces.length) hasPort = true;
+    }
+    if (!hasPort) portless.push(id);
+  }
+  if (portless.length) {
+    ctx.segFallback = 'route domain(s) ' + portless.sort((a, b) => +a - +b).join(', ') + ' have no VLAN with a known port (typical for a vCMP guest), so the segment redirect filter cannot be bound and Alteon would refuse the whole apply ("Segment N - filter F is not added to the port(s) in VLAN V")';
+    ctx.warnManual('Segment', 'mode', 'Network Segmentation NOT used: ' + ctx.segFallback + '. Converted with the per-route-domain split instead (one config file per route domain). To use segmentation, add the VLAN ports, then bind each segment filter: /c/slb/port <p>/filt ena, add <filter id>.');
+    return false;
+  }
   ctx.segments = [];
   let filtId = 1800;
   for (const id of [...ids].sort((a, b) => +a - +b)) {
@@ -249,7 +299,7 @@ function buildSegments(ctx) {
     const gwEntry = [...ctx.gws.values()].find((g) => (g.rdId || '0') === id);
     if (!gwEntry) {
       ctx.warnManual('Segment', 'RD' + id, 'No default gateway found for route domain ' + id +
-        ' in the F5 config; the segment redirect filter needs one (usually the firewall interface of that segment) — set the filter group target manually!');
+        ' in the F5 config; the segment redirect filter needs one (usually the firewall interface of that segment) - set the filter group target manually!');
     }
     ctx.segments.push({ id, name: (ctx.rdInfo.get(id) || '').trim(), vlans, ports: [...ports], gw: gwEntry ? gwEntry.addr : null, filtId });
     filtId += 10;
@@ -305,23 +355,47 @@ function migrate(texts, opts) {
   // PART-3: partition names let the parser un-prefix destinations that are
   // bare addresses ("CORP_10.1.2.3" -> vip 10.1.2.3)
   ctx.partitions = new Set((opts && opts.partitions) || []);
-  const folded = foldNameCollisions(texts);
-  texts = folded.texts;
+  // sources may be plain strings or {text, partition} (PART-5: the extractor
+  // tags each partition config so its default-route-domain can be applied)
+  // BOM-1: a UTF-8 BOM (a config saved by a Windows editor) sits before the
+  // first stanza, so its line no longer starts with the keyword and the whole
+  // stanza was silently dropped (seglab: rd1's VLAN binding -> empty segment 1,
+  // refused at apply "Segment 1 does not have any vlans configured").
+  const sources = texts.map((t) => (typeof t === 'string' ? { text: t, partition: null } : { ...t }))
+    .map((s) => ({ ...s, text: String(s.text).replace(/^﻿/, '') }));
+  // PART-5 pre-pass: partition default route domains. F5 OMITS the %RD
+  // suffix when an object's route domain equals its partition's
+  // default-route-domain - so an un-suffixed address in a partition config
+  // belongs to THAT RD, not to RD 0 (field data: 203 of 317 nodes on one
+  // reporting device; filing them under RD 0 scattered pools across the
+  // per-RD outputs and left 272 virtuals referencing groups in another
+  // file - "not configured" apply-blockers).
+  ctx.partitionRd = new Map();
+  for (const s of sources) {
+    for (const m of s.text.matchAll(/^auth partition (\S+) \{([\s\S]*?)\n\}/gm)) {
+      const rd = (m[2].match(/default-route-domain (\d+)/) || [])[1];
+      if (rd && rd !== '0') ctx.partitionRd.set(m[1], rd);
+    }
+  }
+  const folded = foldNameCollisions(sources.map((s) => s.text));
+  for (let i = 0; i < sources.length; i++) sources[i].text = folded.texts[i];
   for (const f of folded.folds) {
     ctx.warnManual('Name', f.from.split('/').pop(), 'Another object of the same kind shares this short name; the folder was folded into the name to keep both: ' +
       f.from + ' -> ' + f.to.split('/').pop() + '. All references were updated.');
   }
-  for (const text of texts) {
-    const t = text.replace(/\r\n/g, '\n');
+  for (const s of sources) {
+    const t = s.text.replace(/\r\n/g, '\n');
+    ctx.currentDefaultRd = (s.partition && ctx.partitionRd.get(s.partition)) || '0';
     ctx.indexSource(t);          // keep the original stanzas for the logs
     parseAll(t, ctx);
   }
+  ctx.currentDefaultRd = '0';
   shortenIds(ctx);
   let segmented = false;
   if (rdMode === 'segment' || rdMode === 'auto') {
     segmented = buildSegments(ctx);
-    if (!segmented && rdMode === 'segment') {
-      ctx.warnManual('Segment', 'mode', 'Segment mode requested but route domains have OVERLAPPING address space (or none found); fell back to per-RD split — overlapping RDs cannot share one Alteon routing table!');
+    if (!segmented && rdMode === 'segment' && !ctx.segFallback) {
+      ctx.warnManual('Segment', 'mode', 'Segment mode requested but route domains have OVERLAPPING address space (or none found); fell back to per-RD split - overlapping RDs cannot share one Alteon routing table!');
     }
   }
   const partitions = segmented ? null : splitByRouteDomain(ctx);
@@ -336,7 +410,7 @@ function migrate(texts, opts) {
     output = render(ctx);
   }
   // live finding: the Alteon CLI rejects non-ASCII anywhere ("Non printable
-  // characters are not allowed") — e.g. UTF-8 descriptions like "Comunicación"
+  // characters are not allowed") - e.g. UTF-8 descriptions like "Comunicación"
   const asciiGuard = (text) => {
     if (!/[^\n\r\x20-\x7e]/.test(text)) return text;
     const bad = new Set();
@@ -348,7 +422,7 @@ function migrate(texts, opts) {
       return l;
     }).join('\n');
     for (const b of bad) {
-      ctx.warnManual('Output', 'encoding', 'Line contained non-ASCII characters (the Alteon CLI rejects them); replaced with "?" — fix the text manually: ' + b);
+      ctx.warnManual('Output', 'encoding', 'Line contained non-ASCII characters (the Alteon CLI rejects them); replaced with "?" - fix the text manually: ' + b);
     }
     return clean;
   };

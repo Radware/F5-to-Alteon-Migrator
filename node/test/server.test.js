@@ -1,6 +1,12 @@
 'use strict';
 // Tests for the HTTP service: POST /convert, its limits, and the zip it returns.
 const { test, before, after } = require('node:test');
+// the tests drive the service with fetch() and closeAllConnections() (Node 18.2+);
+// the package itself still supports Node 16 for the CLI
+if (typeof fetch !== 'function') {
+  test('HTTP service tests need Node 18.2 or newer', { skip: true }, () => {});
+  return;
+}
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');

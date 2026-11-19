@@ -157,6 +157,10 @@ on Alteon 34.5.7: `apropos advertise` returns no commands at all, and
 a gap in the tool. The attributes stay unconverted; if a migration depends on
 them, it needs a network design decision, not a converter feature.
 
+Not covered by this rejection (VADDR-1, 2026-11-16): a virtual-address
+`address` IS used to resolve a named destination, and `enabled no` IS
+converted (the virtuals on it are emitted disabled).
+
 ---
 
 ## 4b. Same short name from two paths - CLOSED (COLL-1, 2026-08-11)

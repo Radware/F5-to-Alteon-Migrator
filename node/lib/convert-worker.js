@@ -8,7 +8,9 @@ const { resolveInput } = require('./extract');
 
 async function run({ file, rdMode, maxConfigBytes }) {
   const resolved = await resolveInput(file, { maxConfigBytes }).catch((e) => { e.status = 422; throw e; });
-  const res = migrate(resolved.map(s => s.text), { rdMode, partitions: resolved.partitions || [] });
+  // partition tag must travel with each source: migrate() applies the
+  // partition's default-route-domain to un-suffixed addresses (PART-5)
+  const res = migrate(resolved.map(s => ({ text: s.text, partition: s.partition || null })), { rdMode, partitions: resolved.partitions || [] });
   if (res.objectCount === 0) {
     throw Object.assign(new Error('no F5 configuration objects found'), { status: 422 });
   }

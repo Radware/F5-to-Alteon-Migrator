@@ -89,8 +89,8 @@ Connection:Close\r\n
 /c/slb/virt nc_vs_head/service 443 ssl
     group nc_pool_head
     rport 443
-/c/slb/ssl/sslpol nc_vs_head/fessl d/convert d/backend/ssl e
-/c/slb/virt nc_vs_head/service 443 ssl/ssl/sslpol nc_vs_head
+/c/slb/ssl/sslpol f5ssl_be/fessl d/convert d/backend/ssl e
+/c/slb/virt nc_vs_head/service 443 ssl/ssl/sslpol f5ssl_be
 /c/sys
     hprompt ena
 /c/sys/mmgmt

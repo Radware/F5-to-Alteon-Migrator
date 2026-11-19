@@ -65,11 +65,20 @@
 /c/l2/vlan 10
     ena
     name external
-    add 1
 /c/l2/vlan 20
     ena
     name internal
+/c/port 1
+    pvid 10
+/c/port 2
+    pvid 20
+/c/l2/vlan 10
+    add 1
+/c/l2/vlan 20
     add 2
+/c/l2/vlan 1
+    rem 1
+    rem 2
 /c/l3/if 1
     ena
     ipver v4

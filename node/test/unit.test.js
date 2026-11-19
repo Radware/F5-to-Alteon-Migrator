@@ -456,6 +456,11 @@ test('LIVE-4: SNAT pool names over 32 chars are shortened for the nwclss ID', ()
         type snat
     }
 }
+ltm snatpool /Common/Boton_de_pago_PrincipalSeguros_TLS1_snatpool {
+    members {
+        /Common/10.9.9.9
+    }
+}
 `;
   const res = migrate([conf]);
   const m = res.output.match(/nwclss v4 (\S+) persist disable/);
@@ -594,7 +599,8 @@ net route /Common/broken {
   const res = migrate([conf]);
   assert.doesNotMatch(res.output, /add trunk_sync_vcmp/);
   assert.doesNotMatch(res.output, /null/);
-  assert.ok(res.diagnostics.some(d => d.issue.includes('could not be mapped to a numeric Alteon port')));
+  // PORTNAME-1 rewording: the unresolved name is put aside with its own diagnostic
+  assert.ok(res.diagnostics.some(d => d.issue.includes('"trunk_sync_vcmp"') && d.issue.includes('NOT converted')));
   assert.ok(res.diagnostics.some(d => d.issue.includes('no usable IPv4 gateway')));
 });
 
@@ -629,6 +635,11 @@ test('LIVE-19: persistence renders BEFORE the pip block (pbind is a service-menu
     source-address-translation {
         pool /Common/my_snatpool
         type snat
+    }
+}
+ltm snatpool /Common/my_snatpool {
+    members {
+        /Common/10.9.9.8
     }
 }
 `;
@@ -935,9 +946,14 @@ ltm pool /Common/p1 {
     }
 }
 `;
-  const ssl = migrate([mk('443', '/Common/clientssl { context clientside }')]);
+  // SSL pass-through keeps sslid; with a client-ssl profile the device
+  // refuses sslid at apply (SSLID-1), so persistence is put aside there.
+  const ssl = migrate([mk('443', '/Common/tcp { }')]);
   assert.match(ssl.output, / {4}pbind sslid\n {4}ptmout 30\n/);
   assert.doesNotMatch(ssl.output, /pbind ssl\n/);
+  const off = migrate([mk('443', '/Common/clientssl { context clientside }')]);
+  assert.doesNotMatch(off.output, /pbind/);
+  assert.ok(off.diagnostics.some((d) => d.issue.includes('SSL ID persistency cannot be used')));
 });
 
 const MULTI_RD_CONF = `net route-domain /Common/0 {
@@ -1516,6 +1532,144 @@ test('DNS-1: ip-protocol any emits the TCP default plus a second-virtual advisor
   assert.ok(res.diagnostics.some(d => d.name === 'v_sctp' && d.issue.includes('sctp')));
 });
 
+// ---- ADDPORT-1 (found by the APPLY gate): one backend endpoint, several node objects ----
+test('ADDPORT-1: two reals with the same IP and addport merge into one; group references follow', () => {
+  const conf =
+    'ltm node /Common/cbp-a {\n    address 81.9.50.151\n}\n' +
+    'ltm node /Common/cbp-b {\n    address 81.9.50.151\n}\n' +
+    'ltm pool /Common/p_a {\n    members {\n        /Common/cbp-a:4443 {\n            address 81.9.50.151\n        }\n        /Common/cbp-a:80 {\n            address 81.9.50.151\n        }\n    }\n}\n' +
+    'ltm pool /Common/p_b {\n    members {\n        /Common/cbp-b:4443 {\n            address 81.9.50.151\n        }\n        /Common/cbp-b:81 {\n            address 81.9.50.151\n        }\n    }\n}\n';
+  const res = migrate([conf]);
+  const m4443 = res.output.match(/addport 4443/g) || [];
+  assert.strictEqual(m4443.length, 1, 'one real per (ip, addport) endpoint');
+  // the surviving 4443 real serves BOTH groups
+  const gb = res.output.split('/c/slb/group p_b\n')[1].split('\n\n')[0];
+  assert.match(gb, /add cbp-a_4443\n/);
+  assert.ok(!gb.includes('cbp-b_4443'), 'merged real reference remapped');
+  // different addports on the same IP remain separate (only same-port pairs merge)
+  assert.match(res.output, /addport 80/);
+  assert.match(res.output, /addport 81/);
+  assert.ok(res.diagnostics.some(d => d.issue.includes('one IP and the same addport')));
+});
+
+// ---- VIP-PAIR (found by the APPLY gate): same vip:port pairs ----
+test('VIP-PAIR: ntp tcp/udp twins on one VIP keep only the first (device refuses the pair); dns and basic-slb twins coexist', () => {
+  const mk = (n, dest, proto) => 'ltm virtual /Common/' + n + ' {\n    destination /Common/' + dest + '\n    ip-protocol ' + proto + '\n    mask 255.255.255.255\n    pool /Common/p1\n}\n';
+  const conf = 'ltm node /Common/n1 {\n    address 10.5.5.10\n}\n' +
+    'ltm pool /Common/p1 {\n    members {\n        /Common/n1:123 {\n            address 10.5.5.10\n        }\n    }\n}\n' +
+    mk('ntp-tcp-vs', '10.5.5.1:123', 'tcp') + mk('ntp-udp-vs', '10.5.5.1:123', 'udp') +
+    mk('dns-tcp-vs', '10.5.5.2:53', 'tcp') + mk('dns-udp-vs', '10.5.5.2:53', 'udp') +
+    mk('app-tcp-vs', '10.5.5.3:5000', 'tcp') + mk('app-udp-vs', '10.5.5.3:5000', 'udp') +
+    mk('app-tcp2-vs', '10.5.5.3:5000', 'tcp');
+  const res = migrate([conf]);
+  assert.ok(res.output.includes('virt ntp-udp-vs\n'), 'UDP twin kept on an IANA-UDP port (the tcp one could never serve real NTP traffic)');
+  assert.ok(!res.output.includes('virt ntp-tcp-vs\n'), 'tcp ntp twin put aside');
+  assert.match(res.output, /virt ntp-udp-vs\/service 123 ntp\n    protocol udp\n/);
+  assert.ok(res.output.includes('virt dns-tcp-vs\n') && res.output.includes('virt dns-udp-vs\n'), 'dns pair coexists');
+  assert.ok(res.output.includes('virt app-tcp-vs\n') && res.output.includes('virt app-udp-vs\n'), 'basic-slb pair coexists');
+  assert.ok(!res.output.includes('virt app-tcp2-vs'), 'same-protocol duplicate put aside');
+  assert.ok(res.diagnostics.some(d => d.name === 'ntp-tcp-vs' && d.issue.includes('same IP address and vport')));
+});
+
+// ---- PART-5 (found by the APPLY gate): partition default-route-domain semantics ----
+test('PART-5: un-suffixed addresses in a partition belong to its default-route-domain, keeping virt+pool+real together', () => {
+  const root = 'auth partition APP {\n    default-route-domain 500\n}\n' +
+    'net route-domain /Common/RD500 {\n    id 500\n}\n' +
+    'ltm node /Common/rootnode {\n    address 10.1.1.10\n}\n';
+  // partition source: NO % suffixes anywhere - all objects must land in RD 500
+  const part = 'ltm node /Common/APP_web1 {\n    address 10.50.2.10\n}\n' +
+    'ltm pool /Common/APP_web-pool {\n    members {\n        /Common/APP_web1:80 {\n            address 10.50.2.10\n        }\n    }\n}\n' +
+    'ltm virtual /Common/APP_web-vs {\n    destination /Common/10.50.2.1:80\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/APP_web-pool\n}\n';
+  const res = migrate([{ text: root, partition: null }, { text: part, partition: 'APP' }], { rdMode: 'split', partitions: ['APP'] });
+  const rd500 = res.rdOutputs['500'] || '';
+  assert.match(rd500, /\/c\/slb\/real APP_web1\n/);
+  assert.match(rd500, /\/c\/slb\/group APP_web-pool\n[\s\S]{0,200}add APP_web1\n/);
+  assert.match(rd500, /virt APP_web-vs\n[\s\S]{0,60}vip 10\.50\.2\.1\n/);
+  assert.ok(!res.output.includes('APP_web'), 'nothing of the partition leaks into the RD-0 output');
+  assert.match(res.output, /real rootnode/);
+});
+
+test('SPLIT-2: genuinely cross-RD references are removed/put aside instead of dangling (apply-blockers)', () => {
+  const conf =
+    'ltm node /Common/local1 {\n    address 10.2.1.10%7\n}\n' +
+    'ltm node /Common/foreign1 {\n    address 10.3.1.10%8\n}\n' +
+    'ltm pool /Common/p_mixed {\n    members {\n        /Common/local1:80 {\n            address 10.2.1.10%7\n        }\n        /Common/foreign1:80 {\n            address 10.3.1.10%8\n        }\n    }\n}\n' +
+    'ltm pool /Common/p_foreign {\n    members {\n        /Common/foreign1:81 {\n            address 10.3.1.10%8\n        }\n    }\n}\n' +
+    'ltm virtual /Common/vs_orphan {\n    destination /Common/10.2.1.1%7:81\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/p_foreign\n}\n' +
+    'ltm virtual /Common/vs_mixed {\n    destination /Common/10.2.1.2%7:80\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/p_mixed\n}\n' +
+    // duplicate IP across RDs forces SPLIT mode (segmentation refused)
+    'ltm node /Common/dup7 {\n    address 10.9.9.9%7\n}\nltm node /Common/dup8 {\n    address 10.9.9.9%8\n}\n';
+  const res = migrate([conf], { rdMode: 'split' });
+  const rd7 = res.rdOutputs['7'] || '';
+  // mixed pool keeps only the local member
+  assert.match(rd7, /group p_mixed\n[\s\S]{0,200}add local1\n/);
+  assert.ok(!rd7.match(/group p_mixed\n[\s\S]{0,300}add foreign1/), 'cross-RD member removed');
+  // virt whose group lives in another RD is put aside
+  assert.ok(!rd7.includes('virt vs_orphan'), 'orphan virtual put aside');
+  assert.ok(res.diagnostics.some(d => d.name === 'vs_orphan' && d.issue.includes('put aside')));
+  assert.ok(res.diagnostics.some(d => d.name === 'p_mixed' && d.issue.includes('DIFFERENT route-domain')));
+});
+
+// ---- LOGEXP-1 (found by the APPLY gate): dangling health-check references refuse the whole apply ----
+test('LOGEXP-1: unconvertible logexp component (F5 inband) is dropped; lone survivor kept; all-dropped falls back to default', () => {
+  const conf =
+    'ltm monitor inband /Common/passive_mon {\n    interval 5\n}\n' +
+    'ltm monitor tcp /Common/active_mon {\n    interval 5\n    timeout 16\n}\n' +
+    'ltm node /Common/n1 {\n    address 10.6.6.10\n}\n' +
+    'ltm pool /Common/p_mixed {\n    members {\n        /Common/n1:80 {\n            address 10.6.6.10\n        }\n    }\n    monitor /Common/passive_mon and /Common/active_mon\n}\n' +
+    'ltm pool /Common/p_onlypassive {\n    members {\n        /Common/n1:81 {\n            address 10.6.6.10\n        }\n    }\n    monitor /Common/passive_mon\n}\n';
+  const res = migrate([conf]);
+  // the & expression survives with only the resolvable component
+  assert.match(res.output, /logexp \(active_mon\)\n/);
+  assert.ok(!res.output.includes('passive_mon'), 'passive/inband monitor name must never reach the output');
+  // pool monitored ONLY by the passive check keeps the device default (no health line)
+  const g2 = res.output.split('/c/slb/group p_onlypassive\n')[1].split('\n/c/slb')[0];
+  assert.ok(!g2.includes('health'), 'no dangling health reference');
+  assert.ok(res.diagnostics.some(d => d.issue.includes('no Alteon equivalent') || d.issue.includes('unconvertible')));
+});
+
+// ---- apply-level sweep (bank fleet A): GW-1, COOKIE-1, SSLIP-1, FILT-1 ----
+test('GW-1: a default gateway outside every interface subnet is put aside; an on-subnet one is kept', () => {
+  const base = 'net vlan /Common/v112 {\n    tag 1112\n    interfaces {\n        1.1 { }\n    }\n}\n' +
+    'net self /Common/s112 {\n    address 192.168.112.6/27\n    traffic-group /Common/traffic-group-local-only\n    vlan /Common/v112\n}\n';
+  const off = migrate([base + 'net route /Common/default {\n    gw 192.168.1.254\n    network default\n}\n']);
+  assert.ok(!/\/c\/l3\/gw /.test(off.output), 'off-subnet gateway must not be emitted');
+  assert.ok(off.diagnostics.some(d => d.issue.includes('no associated IP interface')));
+  const on = migrate([base + 'net route /Common/default {\n    gw 192.168.112.1\n    network default\n}\n']);
+  assert.match(on.output, /\/c\/l3\/gw 1\n {4}addr 192\.168\.112\.1\n/);
+});
+
+test('COOKIE-1: cookie persistence on https WITHOUT client-ssl is omitted; WITH client-ssl it is kept', () => {
+  const pool = 'ltm node /Common/n1 {\n    address 10.4.4.10\n}\nltm pool /Common/p1 {\n    members {\n        /Common/n1:80 {\n            address 10.4.4.10\n        }\n    }\n}\n';
+  const mk = (n, vip, profiles) => 'ltm virtual /Common/' + n + ' {\n    destination /Common/' + vip + ':443\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/p1\n    persist {\n        /Common/cookie {\n            default yes\n        }\n    }\n    profiles {\n' + profiles + '    }\n}\n';
+  const res = migrate([pool + mk('v_enc', '10.4.4.1', '        /Common/http { }\n') +
+    mk('v_off', '10.4.4.2', '        /Common/http { }\n        /Common/clientssl {\n            context clientside\n        }\n')]);
+  const enc = res.output.split('/c/slb/virt v_enc/service 443 https\n')[1].split('/c/slb/virt')[0];
+  assert.ok(!enc.includes('pbind cookie'), 'no cookie pbind on undecrypted https');
+  assert.ok(res.diagnostics.some(d => d.name === 'v_enc' && d.issue.includes('NOT decrypted')));
+  const offl = res.output.split('/c/slb/virt v_off/service 443 https\n')[1].split('/c/slb/virt')[0];
+  assert.match(offl, /pbind cookie insert/);
+});
+
+test('SSLIP-1: an any-port virtual with client-ssl is put aside (no SSL policy on an ip service)', () => {
+  const conf = 'ltm node /Common/n1 {\n    address 10.4.5.10\n}\nltm pool /Common/p1 {\n    members {\n        /Common/n1:0 {\n            address 10.4.5.10\n        }\n    }\n}\n' +
+    'ltm virtual /Common/v_any_ssl {\n    destination /Common/10.4.5.1:0\n    ip-protocol tcp\n    mask 255.255.255.255\n    pool /Common/p1\n    profiles {\n        /Common/clientssl {\n            context clientside\n        }\n    }\n}\n';
+  const res = migrate([conf]);
+  assert.ok(!res.output.includes('virt v_any_ssl'), 'virtual must be put aside');
+  assert.ok(!res.output.includes('sslpol v_any_ssl'));
+  assert.ok(res.diagnostics.some(d => d.name === 'v_any_ssl' && d.issue.includes('service IP')));
+});
+
+test('FILT-1: a forwarder restricted only to an F5 internal VLAN (4093) is put aside; port 0 never emitted', () => {
+  const conf = 'net vlan /Common/ha_int {\n    tag 4093\n    interfaces {\n        0.1 { }\n    }\n}\n' +
+    'ltm virtual /Common/Forwarder_prod {\n    destination /Common/0.0.0.0:0\n    ip-forward\n    mask any\n    vlans {\n        /Common/ha_int\n    }\n    vlans-enabled\n}\n';
+  const res = migrate([conf]);
+  assert.ok(!res.output.includes('vlan 4093'));
+  assert.ok(!/\/c\/slb\/port 0\n/.test(res.output));
+  assert.ok(!res.output.includes('"Forwarder_prod"'), 'filter put aside, not widened to vlan any');
+  assert.ok(res.diagnostics.some(d => d.name === 'Forwarder_prod' && d.issue.includes('put aside')));
+});
+
 // ---- ROUTE-1 (field report): duplicate routes/gateways and cross-RD gateways ----
 test('ROUTE-1: identical route objects fold to ONE route add; duplicate default gws fold to ONE gw (device refuses the pair)', () => {
   const conf =
@@ -1524,7 +1678,11 @@ test('ROUTE-1: identical route objects fold to ONE route add; duplicate default 
     'net route /Common/OTHER.Internal {\n    gw 10.9.67.254%1\n    network 10.0.0.0/8\n}\n' +
     'net route /Common/LEGACY.Default {\n    gw 10.9.67.254%1\n    network default%1\n}\n' +
     'net route /Common/OTHER.Default {\n    gw 10.9.67.254%1\n    network default\n}\n' +
-    'ltm node /Common/n1 {\n    address 10.9.67.5%1\n}\n';
+    'ltm node /Common/n1 {\n    address 10.9.67.5%1\n}\n' +
+    // GW-1: a gateway needs an interface in its subnet, or the device refuses the apply
+    'net vlan /Common/v67 {\n    tag 67\n    interfaces {\n        1.1 { }\n    }\n}\n' +
+    'net route-domain /Common/rd1 {\n    id 1\n    vlans {\n        /Common/v67\n    }\n}\n' +
+    'net self /Common/s67 {\n    address 10.9.67.130%1/24\n    traffic-group /Common/traffic-group-local-only\n    vlan /Common/v67\n}\n';
   const res = migrate([conf]);
   const all = res.output + Object.values(res.rdOutputs || {}).join('\n');
   assert.strictEqual((all.match(/route\/ip4\/add 10\.0\.0\.0 255\.0\.0\.0 10\.9\.67\.254/g) || []).length, 1, 'one route add, not three');
@@ -1655,4 +1813,280 @@ test('PART-3: partition-prefixed address destination is un-prefixed; unresolvabl
   // a non-address destination with NO matching partition prefix -> put aside
   assert.ok(!res.output.includes('virt named-vs'), 'named virtual-address destination must be put aside');
   assert.ok(res.diagnostics.some(d => d.name === 'named-vs' && d.issue.includes('NOT converted')));
+});
+
+test('PORTNAME-1: VIPRION blade interface names are put aside, never emitted as "add 1/113" (the Alteon reads that as port 1)', () => {
+  const conf = `net trunk TrunkAGG {
+    interfaces {
+        1/1.13
+        1/1.9
+    }
+}
+net vlan /Common/vl_data {
+    interfaces {
+        1/1.1 { }
+        1.2 { }
+    }
+    tag 200
+}
+`;
+  const res = migrate([conf]);
+  assert.doesNotMatch(res.output, /add \d+\//);
+  assert.doesNotMatch(res.output, /\/c\/l2\/trunk/);
+  assert.match(res.output, /\/c\/l2\/vlan 200\n    ena\n    name vl_data(\n|$)/);
+  assert.match(res.output, /\/c\/l2\/vlan 200\n    add 2(\n|$)/);   // PVIDP-1: the add follows the port pvid
+  assert.ok(res.diagnostics.some(d => d.type === 'Trunk' && d.issue.includes('NOT converted')));
+  assert.ok(res.diagnostics.some(d => d.issue.includes('"1/1.1"') && d.issue.includes('put aside')));
+});
+
+test('VCMP-1: vCMP guest "type ha-only" trunks are not emitted; VLANs without interfaces get no guessed port', () => {
+  const conf = `net trunk trunk_externo {
+    interfaces {
+        2.1
+        2.2
+    }
+    type ha-only
+}
+net vlan /Common/vl_ext {
+    interfaces {
+        trunk_externo { }
+    }
+    tag 300
+}
+net vlan /Common/vl_guest {
+    tag 301
+}
+`;
+  const res = migrate([conf]);
+  assert.doesNotMatch(res.output, /\/c\/l2\/trunk/);
+  assert.doesNotMatch(res.output, /    add /);
+  assert.match(res.output, /\/c\/l2\/vlan 300\n    ena\n    name vl_ext/);
+  assert.match(res.output, /\/c\/l2\/vlan 301\n    ena\n    name vl_guest/);
+  assert.ok(res.diagnostics.some(d => d.type === 'Trunk' && d.issue.includes('ha-only')));
+  assert.ok(res.diagnostics.some(d => d.name === 'vl_ext' && d.issue.includes('put aside')));
+  assert.ok(res.diagnostics.some(d => d.name === 'vl_guest' && d.issue.includes('no interfaces')));
+});
+
+test('JOIN-1: the last VLAN line is never glued to the next command when no IP interface follows', () => {
+  const conf = `net vlan /Common/vl_last {
+    tag 4070
+}
+sys ntp {
+    servers { 10.1.1.1 }
+}
+`;
+  const res = migrate([conf]);
+  assert.doesNotMatch(res.output, /name vl_last\/c/);
+  assert.match(res.output, /name vl_last\n\/c\/sys\n/);
+});
+
+test('REAL-HC-1: built-in http/https (inherit parameters) are not set on a real; tcp and custom checks are', () => {
+  const conf = `ltm node /Common/10.1.1.10 {
+    address 10.1.1.10
+}
+ltm node /Common/10.1.1.11 {
+    address 10.1.1.11
+}
+ltm monitor tcp /Common/mon_tcp_custom {
+    defaults-from /Common/tcp
+    interval 5
+    timeout 16
+}
+ltm pool /Common/p1 {
+    members {
+        /Common/10.1.1.10:443 {
+            address 10.1.1.10
+            monitor /Common/https
+        }
+        /Common/10.1.1.11:443 {
+            address 10.1.1.11
+            monitor /Common/mon_tcp_custom
+        }
+    }
+    monitor /Common/tcp
+}
+`;
+  const res = migrate([conf]);
+  assert.doesNotMatch(res.output, /\n    health https\n/);
+  assert.ok(res.diagnostics.some(d => d.type === 'Real' && d.issue.includes('refuses on a real server')));
+  assert.match(res.output, /\n    health mon_tcp_custom\n/);
+});
+
+test('SNATPOOL-1: a SNAT pool becomes the network class its pip references (undefined class refused the whole apply)', () => {
+  const conf = `ltm virtual /Common/v1 {
+    destination /Common/1.2.3.4:443
+    mask 255.255.255.255
+    source-address-translation {
+        pool /Common/sp_short
+        type snat
+    }
+}
+ltm virtual /Common/v2 {
+    destination /Common/1.2.3.5:443
+    mask 255.255.255.255
+    source-address-translation {
+        pool /Common/sp_missing
+        type snat
+    }
+}
+ltm virtual /Common/v3 {
+    destination /Common/1.2.3.6:443
+    mask 255.255.255.255
+    source-address-translation {
+        pool /Common/sp_short
+        type snat
+    }
+}
+ltm snatpool /Common/sp_short {
+    members {
+        /Common/192.0.2.52
+        /Common/192.0.2.53
+    }
+}
+`;
+  const res = migrate([conf]);
+  // class defined once, before the virts, one /32 per member
+  assert.equal((res.output.match(/^\/c\/slb\/nwclss sp_short\n/gm) || []).length, 1);
+  assert.match(res.output, /\/c\/slb\/nwclss sp_short\/network 1\n    net subnet 192\.0\.2\.52 255\.255\.255\.255 include\n/);
+  assert.match(res.output, /\/c\/slb\/nwclss sp_short\/network 2\n    net subnet 192\.0\.2\.53 255\.255\.255\.255 include\n/);
+  assert.ok(res.output.indexOf('/c/slb/nwclss sp_short') < res.output.indexOf('/c/slb/virt v1'));
+  assert.equal((res.output.match(/nwclss v4 sp_short persist disable/g) || []).length, 2);
+  // unknown pool -> pip put aside, never a dangling class reference
+  assert.doesNotMatch(res.output, /sp_missing/);
+  assert.ok(res.diagnostics.some(d => d.name === 'v2' && d.issue.includes('WITHOUT source NAT')));
+});
+
+test('REALVIP-1: a real on a virtual address is put aside and dropped from its groups (refused at apply)', () => {
+  const conf = `ltm node /Common/192.0.2.120 {
+    address 192.0.2.120
+}
+ltm node /Common/192.0.2.121 {
+    address 192.0.2.121
+}
+ltm pool /Common/p1 {
+    members {
+        /Common/192.0.2.120:80 {
+            address 192.0.2.120
+        }
+        /Common/192.0.2.121:80 {
+            address 192.0.2.121
+        }
+    }
+}
+ltm virtual /Common/vweb {
+    destination /Common/192.0.2.120:80
+    mask 255.255.255.255
+    pool /Common/p1
+}
+`;
+  const res = migrate([conf]);
+  assert.doesNotMatch(res.output, /rip 192\.0\.2\.120\n/);
+  assert.doesNotMatch(res.output, /add 192\.0\.2\.120\n/);
+  assert.match(res.output, /rip 192\.0\.2\.121\n/);
+  assert.match(res.output, /vip 192\.0\.2\.120\n/);
+  assert.ok(res.diagnostics.some(d => d.type === 'Real' && d.issue.includes('same IP address as virtual server') && d.issue.includes('p1')));
+});
+
+test('VNAME-1: an F5 description over 126 characters is cut to fit vname (device refuses >128)', () => {
+  const long = 'x'.repeat(140);
+  const conf = `ltm virtual /Common/vlong {
+    description "${long}"
+    destination /Common/192.0.2.130:80
+    mask 255.255.255.255
+}
+ltm virtual /Common/vshort {
+    description "short one"
+    destination /Common/192.0.2.131:80
+    mask 255.255.255.255
+}
+ltm virtual /Common/vbare {
+    description plain
+    destination /Common/192.0.2.132:80
+    mask 255.255.255.255
+}
+`;
+  const res = migrate([conf]);
+  assert.ok(res.output.includes('vname "' + 'x'.repeat(126) + '"\n'));
+  assert.ok(!res.output.includes('x'.repeat(127)));
+  assert.match(res.output, /vname "short one"\n/);
+  assert.match(res.output, /vname plain\n/);
+  assert.ok(res.diagnostics.some(d => d.type === 'Virtual' && d.issue.includes('140 characters')));
+});
+
+test('FLOATVIP-1: a virtual on the floating self-IP is put aside (refused at apply)', () => {
+  const conf = `net vlan /Common/v10 {
+    tag 10
+    interfaces {
+        1.1 { }
+    }
+}
+net self /Common/self_local {
+    address 10.7.7.5/24
+    vlan /Common/v10
+}
+net self /Common/self_float {
+    address 10.7.7.4/24
+    floating enabled
+    traffic-group /Common/traffic-group-1
+    vlan /Common/v10
+}
+ltm virtual /Common/dns_float {
+    destination /Common/10.7.7.4:53
+    ip-protocol udp
+    mask 255.255.255.255
+}
+ltm virtual /Common/dns_other {
+    destination /Common/10.7.7.9:53
+    ip-protocol udp
+    mask 255.255.255.255
+}
+`;
+  const res = migrate([conf]);
+  assert.match(res.output, /\/c\/l3\/ha\/floatip 1\n    ena\n    ipver v4\n    addr 10\.7\.7\.4\n/);
+  assert.doesNotMatch(res.output, /\/c\/slb\/virt dns_float/);
+  assert.match(res.output, /\/c\/slb\/virt dns_other/);
+  assert.ok(res.diagnostics.some(d => d.name === 'dns_float' && d.issue.includes('HA floating ip')));
+});
+
+test('FLOATSUB-1: a floating IP binds to the interface of ITS subnet on a multi-subnet VLAN (refused at apply otherwise)', () => {
+  const conf = `net vlan /Common/v92 {
+    tag 92
+    interfaces {
+        1.1 { }
+    }
+}
+net self /Common/self_a {
+    address 10.1.1.172/28
+    vlan /Common/v92
+}
+net self /Common/self_b {
+    address 10.2.2.179/28
+    vlan /Common/v92
+}
+net self /Common/float_b {
+    address 10.2.2.178/28
+    floating enabled
+    traffic-group /Common/traffic-group-1
+    vlan /Common/v92
+}
+net self /Common/float_a {
+    address 10.1.1.162/28
+    floating enabled
+    traffic-group /Common/traffic-group-1
+    vlan /Common/v92
+}
+net self /Common/float_x {
+    address 10.3.3.3/28
+    floating enabled
+    traffic-group /Common/traffic-group-1
+    vlan /Common/v92
+}
+`;
+  const res = migrate([conf]);
+  const ifOf = (ip) => (res.output.match(new RegExp('/c/l3/if (\d+)\n    ena\n    ipver v4\n    addr ' + ip.replace(/\./g, '\.'))) || [])[1];
+  const floatIf = (ip) => (res.output.match(new RegExp('addr ' + ip.replace(/\./g, '\.') + '\n    if (\d+)')) || [])[1];
+  assert.equal(floatIf('10.2.2.178'), ifOf('10.2.2.179'));
+  assert.equal(floatIf('10.1.1.162'), ifOf('10.1.1.172'));
+  assert.doesNotMatch(res.output, /addr 10\.3\.3\.3\n/);
+  assert.ok(res.diagnostics.some(d => d.name === 'float_x' && d.issue.includes('NOT converted')));
 });

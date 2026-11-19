@@ -1,0 +1,6 @@
+# <path> <public blob sha>  # why the private version wins (see tools/public-drift.js)
+node/lib/convert-worker.js 6c14afbd480c79450161385551cffb1ca359e176  # PR #1 version; private adds the PART-5 partition tag per source
+README.md d8976b8dc8af6119173bc1b1a5e014cad3ab30e2  # PR #1 text kept; private binds the example to 127.0.0.1, adds WORKER_HEAP_MB and the internal-only note
+node/lib/server.js a330d15ab405f7dbc9fe97d9c2275a53036a2c9f  # PR #1 code kept; private adds the worker heap cap and the headersSent guard
+node/package.json 29408403cab675792ee4c3b06b86bf91a48bb696  # PR #1 test entry kept; private adds the newer test suites
+node/test/server.test.js c56b46f52f6246664e028d33207ad6ad5d0136dd  # PR #1 tests kept; private skips them below Node 18.2

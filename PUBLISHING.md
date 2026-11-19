@@ -20,8 +20,11 @@ git commit -m "..."
 git push origin main          # PRIVATE repo, full history - always fine
 ```
 
-Nothing here is restricted. Commit real device names, lab notes and validation
-transcripts freely; that is what the private repo is for.
+Commit history never leaves the private repo, but the **current tree** is what
+gets published - so real device names, customer context, lab logins and people
+belong in **`private/`**, which the release script strips from every public
+snapshot (see `private/README.md`). Anywhere else in the tree they will fail
+the sensitive-content scan and block the release.
 
 ## Publishing a release
 
@@ -41,8 +44,24 @@ The script refuses to publish unless all of these pass:
    authoritative pattern list lives in that script. Any hit aborts the publish
    and prints file, line and reason.
 3. **Full test suite** (`cd node && npm test`).
-4. It then squashes the current tree into **one snapshot commit** on top of the
-   public branch and pushes that - the private history never travels.
+4. It then squashes the current tree, **minus `private/`**, into **one
+   snapshot commit** on top of the public branch and pushes that - the private
+   history never travels. It aborts if any `private/` path survives.
+
+**The public tree is replaced, not merged.** Collaborators with write access
+can work directly on the public repo, so before building the snapshot the
+script runs **`tools/public-drift.js`**: it finds the last release (the
+`Source-Commit:` trailer each snapshot now carries) and refuses to publish if
+any file changed on the public side since then is missing from the private
+repo. To proceed, bring that work into the private repo first (merge/port the
+branch, or `git checkout radware/main -- <path>`). If the private version
+deliberately supersedes one public file version, list that exact version in
+`tools/public-drift-ack.txt` (the error prints the line to add). The
+`-AllowPublicOverwrite` switch discards public-only changes on purpose - use it
+only when that is really the intent.
+
+The pre-collaboration release is preserved as tag `sean-original-v0.9.1` on
+the public repo (and the private repo keeps the full history).
 
 ## Why you cannot do it by accident
 

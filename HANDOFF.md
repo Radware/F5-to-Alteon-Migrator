@@ -1,139 +1,108 @@
-# HANDOFF — read this first to continue the project
+# HANDOFF - current state and next steps
 
-> ## Two repos - read [PUBLISHING.md](PUBLISHING.md) before pushing
->
-> `origin` = **private** (rdwr-seanr): full dev history, customer names, lab
-> credentials - commit freely, `git push origin main`.
-> `radware` = **public** (Radware/F5-to-Alteon-Migrator): sanitized snapshots
-> only, published **exclusively** via `pwsh tools/publish-public.ps1`.
-> A pre-push hook blocks direct pushes to the public remote. On a fresh clone
-> run `git config core.hooksPath .githooks` to enable it.
+> **Two repos - read [PUBLISHING.md](PUBLISHING.md) before pushing.**
+> `origin` = **private** dev repo (full history, `private/` lab + customer
+> context): commit freely, `git push origin main`.
+> `radware` = **public** `Radware/F5-to-Alteon-Migrator`: sanitized snapshots
+> only, published **exclusively** via `tools/publish-public.ps1`.
+> On a fresh clone: `git config core.hooksPath .githooks` (npm install does it too).
 
-This document lets a new engineer (or a new AI chat) pick up exactly where the
-last session finished. Everything needed is in this repo.
+Rules and how to work: **[AGENTS.md](AGENTS.md)**. This file is the state.
+Last updated: 2026-11-19.
 
-## What this project is
+## Where things stand
 
-A modernization of Radware's internal `F5-Migration` tool, which converts an F5
-BIG-IP (tmsh) configuration into a Radware Alteon CLI configuration for PS
-engineers doing F5→Alteon migrations. The original tool
-(`github.com/Radware/F5-Migration`) is a single ~2,700-line Python function
-driving ~40 global variables, shipped as a Flask app + committed .exe, with no
-tests. A read-only reference copy is under `legacy-reference/`.
+| | Version | Content |
+|---|---|---|
+| npm `@radware/f5-to-alteon` | **0.10.0** | latest release (2026-11-19) |
+| public repo `main` | 0.10.0 | snapshot from private `main` via `tools/publish-public.ps1` |
+| private `main` | 0.10.0 | the PR #1 / #2 work (HTTP API `serve`, Dockerfile, GHCR image) is merged in |
 
-## Current state (as of this commit)
+**In 0.10.0** (since 0.9.1; all with tests + DELTAS rows, found by the
+apply-level gate on field data): validate4 (stage + apply gate), LOGEXP-1,
+PART-5, SPLIT-2, VIP-PAIR, ADDPORT-1, ROUTE-1, GW-1, COOKIE-1, SSLIP-1,
+FILT-1, PORTNAME-1, VCMP-1, JOIN-1, REAL-HC-1, SNATPOOL-1, REALVIP-1,
+FLOATVIP-1, FLOATSUB-1, APPLYWAIT-1, VNAME-1, VADDR-1, SSLCERT-1, SSLPOL-1,
+RPORT-1, PTMOUT-1, SYSLOG-1, FTP-1, SSLID-1, IPHC-1, IFVIP-1, BOM-1, USAGE-1,
+SEGVLAN-1, SEGPORT-1, HCDEST-1, NAMELEN-1, REALID-1, ICMPDPORT-1, TCPSEND-1,
+BODY-1, VTAG-1, PVIDP-1, PROMPT-1, plus the HTTP API / container. Tests: 156.
+Gate evidence: validation/VALIDATION_STATUS.md Round 14 (every field output
+of the release build applied with 0 apply errors, except dev19 which exceeds
+the lab VA capacity).
 
-- **Rebuilt tool** — `node/`, an npm package `@radware/f5-to-alteon`. Cross-platform
-  Node.js CLI. Accepts a **.qkview/.ucs archive, an extracted qkview directory,
-  or bare conf files** (auto-detected; multi-GB qkviews stream in seconds):
-  `node node/bin/f5-to-alteon.js <device.qkview | dir | bigip.conf ...> -o out/`.
-- **Tests** — `node/test/`, 35 tests, all passing (`cd node && npm test`):
-  - `golden.test.js` asserts the Node output equals the frozen legacy output
-    byte-for-byte except a fixed, documented set of bug-fix deltas.
-  - `unit.test.js` covers each fixed bug (BUG-*) + real-config gaps (GAP-*).
-  - `extract.test.js` covers qkview/tar/dir input auto-detection.
-- **Alteon-side validation — PASSED** on both target Alteons (0 errors), configs
-  applied and reverted non-destructively. Reports in `validation/results/`.
-  Lab details (IPs, creds, quirks) in `LAB.md`. Use **`validation/validate3.js`**
-  (prompt-aware; `validate2.js` silently validates nothing if the device has
-  pending config changes — kept only for reference).
-- **Bugs fixed** (all in the legacy tool): see `DELTAS.md` / `KNOWN_BUGS.md`.
-  BUG-6/7/8 were found *by* live Alteon validation.
+**What the tool converts today:** virtuals (tcp/udp, VLAN-restricted ->
+filter pairs), pools, nodes, monitors (incl. AND/OR -> LOGEXP), persistence
+(cookie, source IP, SSL session ID), HTTP/SSL profiles, SNAT pools and SNAT
+Automap, administrative partitions, route domains (segmentation on one device,
+or per-RD split), wildcard / forwarding / source-match virtuals -> filters,
+VLANs (tagged / untagged members, paste-safe PVID order), interfaces, floating
+IPs, routes, trunks/LACP, mgmt/NTP/syslog/SNMP.
+Not converted (diagnostics): iRules, LTM policies, GTM, ASM, DNS monitors,
+standalone SNAT objects, POST monitor bodies with quotes or line breaks, TCP
+monitors with send/expect (need a script-type check).
 
-## Phase 3b status (F5-side validation) — IN PROGRESS
+## Open threads - read before acting
 
-Done so far (2026-07-05 session):
+1. **Ownership hand-off to PS.** The PR #1 author answered (2026-11-11) that
+   PS takes ownership starting Q1 2027; the owner wants it to move sooner.
+   Details and the drafted hand-over mail: `private/CONTEXT.md`.
+2. **The contributor has WRITE access to the public repo.** The release
+   script refuses to publish while the public repo has work missing from the
+   private repo (`tools/public-drift.js`, see PUBLISHING.md). Check before
+   every release; the guard lists the commits.
+3. **dev19 is not apply-proven.** Its 34,559-line output exceeds the lab VA
+   (1,024 groups / virtual servers, 1,023 services) and refuses on capacity
+   alone. Gate it on a larger Alteon when one is available.
+4. **Lab VAs are not factory default:** both have port 2 in lab VLAN 2. Output
+   that moves access ports out of VLAN 1 (PVIDP-1) refuses there; move port 2
+   back to VLAN 1 first (`/c/l2/vlan 1/add 2`, answer y to the PVID prompt -
+   that moves it out of VLAN 2 - then `apply`; verified on 34.0.12). The gate's `revert apply` restores the saved lab state after each
+   file, so redo it per file.
+5. **Inter-route-domain services on device A/B.** About half of those
+   services are F5 inter-RD load balancing (virtual and backends in different
+   RDs). SPLIT-2 puts them aside, correctly - but this is a migration-design
+   decision for that customer (local backends per instance, or an
+   inter-instance path), not something to "fix" in the converter.
+6. **Legacy tool still in use.** Reports with a Python traceback
+   (`local_runner.py`, `app/f5_mig.py`, `KeyError: 'vip'`) are about the old
+   tool: reply with "use @radware/f5-to-alteon", do not fix the old code.
 
-1. **Real BIG-IP exports tested.** Six real production config sets (BIG-IP
-   17.1.2.x, from qkviews under `C:\Users\SeanR\Documents\F5 config examples`
-   on Sean's machine — customer data, NOT committed) all convert cleanly.
-   ~900 virtuals total. This surfaced **10 conversion gaps (GAP-1..GAP-10 in
-   `DELTAS.md`)** — all fixed + unit-tested, including two regressions vs the
-   legacy tool (member ratio, member monitor) and a mis-parse of
-   `monitor min N of {...}`.
-2. **Live-validated end-to-end on BOTH Alteon versions.** The synthetic
-   new-constructs fixture applies with **0 errors** on 34.5.7.0 and 34.0.12.0,
-   and the FULL converted production configs (fleet-A ~717 lines, ltm1 ~1145
-   lines) apply with **zero converter-attributable errors** — every remaining
-   rejected line is environmental (cookie-persistence license, DHCP mgmt
-   port, 2-port VA vs multi-slot source hardware). This drove fixes BUG-8 +
-   LIVE-1..LIVE-7 (`DELTAS.md`) and a rewritten prompt-aware validator
-   (`validation/validate3.js`).
-3. **qkview/UCS/dir direct input** (`node/lib/extract.js`) — big ease-of-use
-   win: users feed the tool whatever they have.
-4. **`tools/sanitize.js`** — remaps public IPs / scrubs customer identifiers so
-   a real config can be committed as a fixture (pending Sean's approval on
-   policy; sources are bank configs).
+## Next steps (prioritized)
 
-Still to do:
+1. Field requests (not started, owner to prioritize): iRule -> Alteon
+   content-based rules (the URI-routing mapping is already traffic-proven,
+   see OPEN-QUESTIONS 3; iRule -> AppShape++ is EXCLUDED by the owner), and
+   ASM policy -> Alteon SecWA mapping (no research done yet).
+2. LTM policies: decide between a policy inventory report (recommended in
+   OPEN-QUESTIONS 3) and the `forward select` converter.
+3. Gate dev19 on a larger Alteon (thread 3).
+4. Still open from OPEN-QUESTIONS: DNS monitor field mapping (prove the
+   unhealthy case), standalone SNAT equivalence (prove with tcpdump), and
+   traffic-proof that a SECOND same-VIP virt serves (applies today, only the
+   first was ever traffic-tested).
 
-1. Commit a sanitized real-config fixture (needs Sean's OK).
-2. Deploy F5 BIG-IP VE 17.5.x in Azure (subscription "PS-Training" exists but
-   the token expired — **Sean must run `az login`**), build a representative
-   config, export, add as a committable fixture.
-3. Behavioral round-trip: same backends behind F5 then behind the migrated
-   Alteon; compare LB / health / persistence / SSL behavior. Check whether
-   Radware publishes an Alteon VA image on Azure Marketplace (else lab Alteons
-   + a license question for the cloud).
-
-## Explicitly OUT OF SCOPE right now
-
-**Phase 4 ("migrate more": iRules, GTM/GSLB, route domains, dynamic routing,
-non-/32 VIP→filter).** Do not implement unless asked. The tool currently emits a
-clear diagnostic (log1/log2) for these instead of mis-converting them.
-
-## Repo layout
-
-```
-node/                 The npm package (lib/, bin/, test/, package.json)
-  lib/context.js      Per-run state + diagnostics (no globals)
-  lib/tables.js       Mapping tables (ported + de-duplicated from legacy)
-  lib/parsers.js      One parser per F5 object type -> typed model
-  lib/render.js       Model -> Alteon CLI (byte-compatible w/ legacy + fixes)
-  lib/index.js        migrate(texts) entry point
-  bin/f5-to-alteon.js CLI
-fixtures/sample01/    SYNTHETIC config, frozen legacy golden, expected output
-validation/           Non-destructive live Alteon validator + results + runbook
-legacy-reference/     Read-only copy of the original Python tool
-docs/                 Proposal + progress report (Word)
-DELTAS.md             Exact documented differences vs legacy output
-KNOWN_BUGS.md         The defects found while baselining
-ROADMAP.md            Phased plan (Phase 3b = F5 validation is the next step)
-LAB.md                Alteon IPs/creds + F5 (to be provisioned) + how-to
-NEW_CHAT_PROMPT.md    Copy-paste prompt to continue in a fresh chat
-.github/workflows/ci.yml   CI (tests on push/PR)
-```
-
-## Verify everything quickly
+## Verify the repo quickly
 
 ```bash
-cd node
-node bin/f5-to-alteon.js ../fixtures/sample01/bigip_base.conf ../fixtures/sample01/bigip.conf -o /tmp/out --name demo
-node --test test/golden.test.js test/unit.test.js      # expect: 13 pass
-# optional: live Alteon validation (see LAB.md for prereqs)
-cd ../validation && ./run_validation.ps1 -Pass radware
+cd node && npm test                       # 156 pass
+node ../tools/scan-sensitive.js           # clean
+node bin/f5-to-alteon.js ../fixtures/sample01/bigip_base.conf ../fixtures/sample01/bigip.conf -o ../out/sample01
 ```
 
-## Suggested next steps (in order)
+Device validation needs the Radware VPN and the lab in
+`private/LAB-ACCESS.md`; the procedure is in
+`.claude/skills/alteon-device-validation/SKILL.md`.
 
-1. **Phase 3b — F5-side validation (do this first):**
-   a. Deploy an F5 BIG-IP VE (AWS/Azure, v17.5.x), build a representative config,
-      export `bigip.conf`/`bigip_base.conf`, add as a new fixture with expected output.
-   b. Convert it, apply to both Alteons via `validation/`, confirm zero errors.
-   c. Build the behavioral round-trip (same backends+client behind F5 then Alteon)
-      and assert equivalent behavior.
-2. Expand fixtures with 3–5 sanitized real customer BIG-IP configs.
-3. Publish: enable CI on GitHub and `npm publish` under the Radware org.
-4. Only then consider Phase 4, one object type at a time, each gated behind a live
-   round-trip test.
+## History in one paragraph
 
-## Known gotchas
-
-- Alteon fresh VAs force an admin password change at first login; repeated failed
-  SSH logins cause a temporary source-IP lockout (`ECONNRESET`). Wait it out.
-- `node/lib/tables.js` timezone + service-port maps are subsets; extend as real
-  configs require (unmapped values emit a diagnostic and a safe default).
-- Non-/32 VIPs are dropped with a diagnostic (legacy tried a filter conversion;
-  that path is not yet ported).
-- On the deep Windows session path, `git` hits MAX_PATH; work in a short path
-  (e.g. `C:\gh\...`) with `git config --global core.longpaths true`.
+Phase 1-3: the legacy Python tool was characterized (golden files), rebuilt in
+Node with every legacy path covered, and its bugs fixed (BUG-1..8). Real
+customer exports exposed GAP-1..10 and live staging exposed LIVE-1..25.
+Features were added one at a time, each device-proven: qkview input, bulk mode,
+wildcard filters (WVF), route domains (split, then segmentation - traffic
+proven), partitions (PART-1..5), SNAT automap (traffic proven), source-match
+filters (TMC), tcp/udp (DNS-1), VLAN restriction filters (VLANF-1, traffic
+proven). In August 2026, after a field user found an apply-blocker that line
+staging had missed, the owner made apply-level validation mandatory; the new
+gate then found five more apply-blocker classes in field data. See
+validation/VALIDATION_STATUS.md for every round.
