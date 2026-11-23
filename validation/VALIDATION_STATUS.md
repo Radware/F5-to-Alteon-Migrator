@@ -452,6 +452,62 @@ skipped at the owner's request (their pairs are gated).
 Tests: 156. `node tools/scan-sensitive.js`: clean. `dangling-refs.js` on the
 final build: clean (45 files).
 
+## Round 15 (2026-11-22 / 23): field requests IDLEN-1, MGMTRT-1, MGMTDHCP-1 (v0.10.1)
+
+Two requests from the PS team (2026-11-19 / 21): keep real / group / virt
+names up to the Alteon limit instead of renaming over 32 characters, and
+convert F5 management routes instead of "not supported".
+
+**Device truth (probed on 34.0.12 and 34.5.7, with apply):**
+- IDLEN-1: real, group and virt IDs of 33, 64, 128 and 255 characters apply;
+  256 is refused. References with 100-character IDs apply in group `add`,
+  service `group`, group `backup g<id>` and filter `group`.
+- MGMTRT-1: `/c/sys/mmgmt/route/ipv4/add <dst> <mask> <gw>` (one line, no
+  prompt) applies when the gateway is on the management port subnet, also
+  with the DHCP client on. A gateway outside that subnet refuses the WHOLE
+  apply ("Error: Nexthop network not same as management for dest D mask M
+  gw G." then "Error: Apply not done"), reproduced with a single route on both
+  versions. The first probe had reported "Apply complete" - it carried an extra
+  IPv6 route line that changed the result; that probe is void.
+- MGMTDHCP-1: `/c/sys/mmgmt/dhcp` takes `disable|enable` (`d|e`, `dis`/`ena`
+  accepted); a bare `dhcp` prompts. `dhcp dis` was staged on 34.5.7 (pending
+  diff turns the lease into a static address) and reverted - not applied,
+  because it would cut the lab management access.
+
+**How the first build was caught.** The first 0.10.1 build wrote the
+management routes into the config when the gateway was on the F5 management
+subnet. The fleet gate (lanes 22/23) refused the apply on every file that had
+routes: the lab management port is on its own DHCP subnet. On a target whose
+management address differs from the F5 (DHCP, or the Alteon keeps its own),
+the customer's whole paste would refuse the same way. The lanes were stopped
+and the design changed: routes are never written into the config; each one
+is a manual step in needs-manual-work.txt with the exact one-line command.
+Checking the DHCP side exposed MGMTDHCP-1 (every config had `dhcp ena`; one
+field device is explicitly static).
+
+**Field data (30 devices, build = v0.10.1):** 0 renames (3,796 before;
+longest ID 65); 188 management routes listed with their command, 0 route lines
+in the configs; dev01 lost its wrong `dhcp ena`. Every other config line is
+byte-identical to the build gated before the route change.
+
+**Gate results** (all-enabled copies, validate4 with apply; UNSENT 0 on every
+counted run; lanes 24/25 lost SSH at 19:19 on 11-22 with the VPN, the two cut
+files never reached apply and were rerun in full in lanes 26/27):
+
+| Device | Files | APPLY errors | Line findings |
+|---|---|---|---|
+| 34.0.12 | dev06, dev09 + rd1, dev05 rd1, dev16 rd1 / rd2 / rd3, dev17 rd1, dev04, dev02, dev03, dev12, dev15, dev14, dev18, dev30, dev26, dev23 rd3 | 0 | env only |
+| 34.0.12 | dev22 (gated on the first build, config byte-identical) | 0 | 1 env |
+| 34.0.12 | dev01 (port 2 moved to VLAN 1 first) | 0 | 25 env (absent ports 3/4 + their cascade, DHCP mgmt), as in Round 14 |
+| 34.5.7 | dev20, dev05, dev28, dev16 main / rd4, dev17, dev07, dev13, dev23 main / rd2 / rd4, dev11, dev09 rd1, dev25, dev27 | 0 | env only |
+
+Line findings, all files: 193 absent chassis ports (3, 4, 21, 22, 50, 70, 80 -
+the VA has ports 1-2), 56 cascades of those refused menus (`adminkey`,
+`tag ena`, `pvid`, `/c/slb/port` `server` / `client` / `proxy ena`, `add`),
+60 DHCP management (`addr` / `mask` / `gw` refused while the lab DHCP client is
+on). No other class. Not gated: dev19 (lab VA capacity, HANDOFF thread 3), the
+HA twins dev08, dev10, dev21, dev29 (owner: skip twin devices; they differ from gated dev04, dev06, dev20, dev28 only in their own interface addresses, masks and a few lines, 20-134 of 2,400-8,100 lines) and dev24 (byte-identical to dev23).
+
 ## Harness & safety
 
 Use **`validate3.js`** (`validate.js`/`validate2.js` kept for reference only -

@@ -28,7 +28,8 @@ const LOG2_BANNER = `
  * @param {string[]} texts - contents of bigip.conf / bigip_base.conf (any order)
  * @returns {{output: string, log1: string, log2: string, diagnostics: object[]}}
  */
-// Alteon IDs (real/group/virt names) are limited to 32 characters - longer
+// Alteon IDs (real/group/virt names) are limited to ctx.maxIdLen characters
+// (IDLEN-1: 255 on 34.0.12 / 34.5.7; LIVE-9 hit 32 on an earlier lab) - longer
 // names make the CLI reject the definition line and every line after it
 // cascades into the wrong menu (found live: 1,400+ long names across two
 // production fleets). Rename deterministically and fix every reference.
@@ -37,9 +38,9 @@ function shortenIds(ctx) {
     // suffix must stay alphanumeric/underscore: the CLI rejects '~' and other
     // punctuation in IDs with "Special characters are not allowed"
     const suffix = '_' + ctx.nextId('id');
-    const n = oldName.slice(0, 32 - suffix.length) + suffix;
+    const n = oldName.slice(0, ctx.maxIdLen - suffix.length) + suffix;
     ctx.renamedFrom.set(n, oldName);   // later diagnostics can still find the F5 source
-    ctx.warnManual(kind, oldName, 'Name exceeds the 32-char Alteon ID limit; renamed to "' + n + '". All references were updated.');
+    ctx.warnManual(kind, oldName, 'Name exceeds the ' + ctx.maxIdLen + '-char Alteon ID limit; renamed to "' + n + '". All references were updated.');
     return n;
   };
   // reals (incl. any that end up with no IP at all -> cannot be configured)
@@ -54,7 +55,7 @@ function shortenIds(ctx) {
       ctx.warnManual('Real', k, 'Node address "' + v.attrs.get('rip') +
         '" is not a valid IPv4 address (redacted or placeholder?); fix it before applying on Alteon!');
     }
-    if (k.length > 32) {
+    if (k.length > ctx.maxIdLen) {
       const n = renamed('Real', k);
       realRen.set(k, n); v.name = n;
       ctx.reals.delete(k); ctx.reals.set(n, v);
@@ -67,7 +68,7 @@ function shortenIds(ctx) {
       const [rn, port] = mk.split(':');
       if (realRen.has(rn)) { v.members.delete(mk); v.members.set(realRen.get(rn) + (port ? ':' + port : ''), mv); }
     }
-    if (k.length > 32) {
+    if (k.length > ctx.maxIdLen) {
       const n = renamed('Group', k);
       poolRen.set(k, n);
       ctx.pools.delete(k); ctx.pools.set(n, v);
@@ -90,7 +91,7 @@ function shortenIds(ctx) {
   for (const [k, v] of [...ctx.virts]) {
     const gn = v.service.get('group');
     if (gn && poolRen.has(gn)) v.service.set('group', poolRen.get(gn));
-    if (k.length > 32) {
+    if (k.length > ctx.maxIdLen) {
       const n = renamed('Virt', k);
       ctx.virts.delete(k); ctx.virts.set(n, v);
     }
@@ -355,6 +356,9 @@ function migrate(texts, opts) {
   // PART-3: partition names let the parser un-prefix destinations that are
   // bare addresses ("CORP_10.1.2.3" -> vip 10.1.2.3)
   ctx.partitions = new Set((opts && opts.partitions) || []);
+  // IDLEN-1: real/group/virt IDs up to 255 chars apply on 34.0.12 and 34.5.7
+  // (256 refused); maxIdLen 32 restores the old renaming for older releases.
+  ctx.maxIdLen = (opts && +opts.maxIdLen) || 255;
   // sources may be plain strings or {text, partition} (PART-5: the extractor
   // tags each partition config so its default-route-domain can be applied)
   // BOM-1: a UTF-8 BOM (a config saved by a Windows editor) sits before the

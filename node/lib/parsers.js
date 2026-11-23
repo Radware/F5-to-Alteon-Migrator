@@ -1232,7 +1232,16 @@ function parseSystem(text, ctx) {
     ctx.mgmt.mmgmt.set('addr', ip);
     ctx.mgmt.mmgmt.set('mask', T.prefixToMask(pfx) || pfx);
   }
-  if (/^sys management-dhcp/m.test(text)) ctx.mgmt.mmgmt.set('dhcp', 'ena');
+  // MGMTDHCP-1: "sys management-dhcp" is only the DHCP client's request
+  // options (present on every F5 config seen); the switch is
+  // "sys global-settings { mgmt-dhcp ... }", listed only when not the default.
+  // With mgmt-dhcp disabled the F5 management address is static: no
+  // "dhcp ena" (it would move the Alteon management port to DHCP).
+  const gs = text.match(/^sys global-settings \{\n([\s\S]*?)^\}/m);
+  const mdhcp = gs && (gs[1].match(/^\s+mgmt-dhcp (\S+)/m) || [])[1];
+  if (mdhcp === 'disabled') {
+    if (mi) ctx.warnManual('System', 'management', 'The F5 management address is static (sys global-settings mgmt-dhcp disabled); no "dhcp" line was written. If the Alteon management port runs DHCP, run "/c/sys/mmgmt/dhcp disable" before the /c/sys/mmgmt addr, mask and gw lines (they are refused while DHCP is enabled).');
+  } else if (/^sys management-dhcp/m.test(text)) ctx.mgmt.mmgmt.set('dhcp', 'ena');
   // management routes - FIX BUG-5: parse ALL of them (legacy skipped the last)
   for (const block of text.match(BLOCK('sys management-route')) || []) {
     let gw = null, isDefault = false, net = null;
@@ -1245,7 +1254,11 @@ function parseSystem(text, ctx) {
       }
     }
     if (isDefault && gw) ctx.mgmt.mmgmt.set('gw', gw);
-    else if (gw) ctx.warnManual('Route', 'N/A', 'Management routes are not supported by Alteon! \n line: ' + net + ' ' + gw);
+    // MGMTRT-1 (field report): Alteon has management static routes
+    // (/c/sys/mmgmt/route/ipv4, probed on 34.0.12 and 34.5.7); the old
+    // "not supported" message was wrong. Put aside at render time with the
+    // exact command (warnMgmtRoutes).
+    else if (gw) ctx.mgmt.routes.push({ name: (block.match(/^sys management-route (\S+)/m) || [])[1] || 'N/A', net, gw });
   }
   // ntp - FIX BUG-4: legacy crashed (undefined var) on the first line and
   // silently dropped the whole NTP config

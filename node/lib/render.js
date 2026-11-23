@@ -6,6 +6,43 @@
 // against the frozen legacy golden files.
 const T = require('./tables');
 
+// MGMTRT-1: F5 management routes are NOT written into the config. Alteon has
+// /c/sys/mmgmt/route/ipv4/add <dst> <mask> <gw> (one line; a bare "add"
+// prompts for each value), but a gateway outside the subnet of the Alteon
+// management port refuses the WHOLE apply ("Nexthop network not same as
+// management for dest D mask M gw G." then "Apply not done" - 34.0.12 and
+// 34.5.7, 2026-11-22). That subnet is only known on the target (F5 management
+// is DHCP by default, and the Alteon may keep its own management address), so
+// each route goes to needs-manual-work with the exact command to run once the
+// management address is applied. IPv6: one-line form not proven.
+function warnMgmtRoutes(ctx) {
+  const num = (x) => x.split('.').reduce((a, o) => (a * 256) + (+o), 0) >>> 0;
+  const isV4 = (x) => /^\d{1,3}(\.\d{1,3}){3}$/.test(x || '') && x.split('.').every((o) => +o <= 255);
+  const addr = ctx.mgmt.mmgmt.get('addr'), mmask = ctx.mgmt.mmgmt.get('mask');
+  const why = 'the Alteon refuses the whole apply ("Nexthop network not same as management") if a management route gateway is not on the subnet of the Alteon management port, and that address is only known on the target.';
+  const seen = new Set();
+  for (const rt of ctx.mgmt.routes) {
+    const [ip, pfxRaw] = String(rt.net).split('/');
+    const pfx = pfxRaw === undefined ? '32' : pfxRaw;
+    const mask = /^\d+$/.test(pfx) && +pfx <= 32 ? T.prefixToMask(pfx) : null;
+    const manual = (txt) => ctx.warnManual('Route', rt.name, 'Management route ' + rt.net + ' via ' + rt.gw + ' NOT added to the config (put aside): ' + txt);
+    if (!isV4(ip) || !isV4(rt.gw) || !mask) {
+      manual('IPv6 or unrecognized address. Add it by hand under /c/sys/mmgmt/route/ipv6 (or ipv4) once the management address is set.');
+      continue;
+    }
+    if (((num(ip) & num(mask)) >>> 0) !== num(ip)) {
+      manual('the destination has host bits set for /' + pfx + '. Check the F5 route, then "/c/sys/mmgmt/route/ipv4/add <network> ' + mask + ' ' + rt.gw + '" and apply.');
+      continue;
+    }
+    const key = ip + ' ' + mask + ' ' + rt.gw;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const offF5 = isV4(addr) && isV4(mmask) && ((num(rt.gw) & num(mmask)) >>> 0) !== ((num(addr) & num(mmask)) >>> 0);
+    manual(why + (offF5 ? ' Note: the gateway is not on the F5 management subnet ' + addr + '/' + mmask + ' either - check it.' : '') +
+      ' After the management address is applied, run: "/c/sys/mmgmt/route/ipv4/add ' + ip + ' ' + mask + ' ' + rt.gw + '" and apply.');
+  }
+}
+
 // Alteon network-class IDs follow the same 32-char / ASCII rules as other IDs.
 function nwclssId(name) {
   const clean = String(name).replace(/[^\w.-]/g, '_');
@@ -928,6 +965,7 @@ function render(ctx) {
   if (out && !out.endsWith('\n')) out += '\n';
   if (!ctx.skipSystem) {
     out += '/c/sys\n    hprompt ena\n';
+    warnMgmtRoutes(ctx);
     const sysSections = [['mmgmt', ctx.mgmt.mmgmt], ['ntp', ctx.mgmt.ntp]];
     for (const [label, map] of sysSections) {
       out += '/c/sys/' + label + '\n';

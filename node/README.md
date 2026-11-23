@@ -127,6 +127,7 @@ virtuals, persistence before proxy-IP blocks, etc.).
 | `--name <name>` | Override the output folder name (single input only) |
 | `--bulk` / `--single` | Force bulk or single-device handling of a folder |
 | `--rd-mode auto\|segment\|split` | How to handle F5 **route domains** (see below). Default `auto`. |
+| `--max-id-len <n>` | Longest real/group/virt ID kept as is. Default `255` (proven on Alteon 34.0.12 and 34.5.7); longer F5 names are renamed and every reference updated. Use `32` for older Alteon releases. |
 
 ## Route domains
 
@@ -162,7 +163,7 @@ isolation all verified with tcpdump).
 - **Network**: VLANs (enabled, with port membership), self-IPs -> interfaces,
   floating IPs, static routes + default gateways, trunks/LACP, route domains
   (above)
-- **System**: management IP/gateway, NTP, syslog, SNMP
+- **System**: management IP/gateway, NTP, syslog, SNMP; management static routes are listed in needs-manual-work.txt with the exact `/c/sys/mmgmt/route/ipv4/add` command (an off-subnet gateway would refuse the whole apply)
 - Anything else -> a named diagnostic in the logs (never silently dropped)
 
 ## Troubleshooting

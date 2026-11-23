@@ -1,6 +1,6 @@
 {
   "name": "@radware/f5-to-alteon",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Migrate an F5 BIG-IP (tmsh) configuration to Radware Alteon CLI - accepts qkview/UCS archives, config folders, or bare conf files; converts virtuals (incl. tcp/udp protocol and VLAN-restricted listeners), pools, monitors, persistence, SSL, SNAT, VLANs/routes, administrative partitions, route domains (segmentation or per-RD split) and wildcard virtuals (filters).",
   "license": "Apache-2.0",
   "repository": {
@@ -20,7 +20,7 @@
     "node": ">=16"
   },
   "scripts": {
-    "test": "node --test test/golden.test.js test/unit.test.js test/extract.test.js test/newconstructs.test.js test/sample02.test.js test/field-vaddr-sslcert.test.js test/apply-sweep2.test.js test/server.test.js",
+    "test": "node --test test/golden.test.js test/unit.test.js test/extract.test.js test/newconstructs.test.js test/sample02.test.js test/field-vaddr-sslcert.test.js test/apply-sweep2.test.js test/field-requests.test.js test/server.test.js",
     "prepare": "node ../tools/dev-setup.js || exit 0",
     "prepublishOnly": "npm test"
   },

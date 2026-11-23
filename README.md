@@ -124,7 +124,7 @@ guidance. With route domains in **split** mode you also get one
 | Administrative partitions | converted alongside /Common - each partition's objects are prefixed (`CORP_...`), partition route domains included |
 | Route domains | -> Alteon **Network Segmentation** on one device (non-overlapping RDs), or per-RD split outputs (`--rd-mode`) |
 | Network | VLANs, self-IPs -> interfaces, floating IPs, static routes + gateways, trunks/LACP |
-| System | mgmt IP/gw, NTP, syslog, SNMP |
+| System | mgmt IP/gw, NTP, syslog, SNMP; management static routes as ready-to-run manual steps |
 | iRules, GTM/GSLB | named diagnostics with guidance (no automatic equivalent) |
 
 The tool is a strict **superset of the legacy F5-Migration tool** - every
@@ -133,7 +133,7 @@ deliberate bug fixes ([`DELTAS.md`](DELTAS.md)).
 
 ## How it was validated
 
-Fourteen rounds of live validation, documented in
+Fifteen rounds of live validation, documented in
 [`validation/VALIDATION_STATUS.md`](validation/VALIDATION_STATUS.md):
 
 - **39 real production devices** converted and staged on live Alteons
@@ -159,14 +159,14 @@ Fourteen rounds of live validation, documented in
   serves a routed client; cross-segment traffic is redirected to the segment
   gateway (tcpdump MAC-level evidence); segment isolation holds (a segment-2
   client is NOT served by a segment-1 VIP).
-- **98 ledger entries** (8 legacy-baseline bugs, 10 parser gaps, 80
+- **101 ledger entries** (8 legacy-baseline bugs, 10 parser gaps, 83
   live-device and apply-level findings, a few of them device-proven features;
   several were lines the CLI accepted and silently ignored) - each locked in
   by a regression test. The full ledger: [`DELTAS.md`](DELTAS.md).
 
 ```bash
 cd node
-npm test     # 156 tests, all passing
+npm test     # 163 tests, all passing
 ```
 
 ## Found a problem? Please tell us

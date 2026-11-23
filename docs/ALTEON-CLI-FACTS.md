@@ -30,7 +30,7 @@ Three failure classes matter, in increasing danger:
 
 | Fact | ID |
 |---|---|
-| Real/group/virt/hc/nwclss IDs: max 32 chars; longer is rejected and cascades | LIVE-4, LIVE-9 |
+| Real / group / virt IDs: max 255 chars on 34.0.12 and 34.5.7 (256 refused; references in group `add`, service `group`, `backup g<id>`, filter `group` apply). An earlier lab refused over 32 (LIVE-9) - `--max-id-len 32` for older releases. hc / nwclss IDs: max 32 | IDLEN-1, LIVE-4, LIVE-9 |
 | Descriptive `name` limits (34.0.12, quotes not counted): real / group / advhc 128, nwclss 32, VLAN 32, filter 31, segment over 128. Longer is refused with a `Usage:` line only (no "Error") | NAMELEN-1, USAGE-1 |
 | IDs reject special characters ("Special characters are not allowed"): `%`, `~` ... F5 names objects `10.1.2.3%1` | PART-2 |
 | Any non-ASCII byte is rejected ("Non printable characters are not allowed") | LIVE-11 |
@@ -52,6 +52,7 @@ Three failure classes matter, in increasing danger:
 | Two default gateways with the same IP are refused ("Gateways 2 and 3 have the same IP address"); a gateway needs an interface in its subnet | apply | ROUTE-1 |
 | A duplicate `route/ip4/add` line is tolerated | - | ROUTE-1 |
 | `/c/sys/mmgmt` is rejected when the mgmt port is DHCP-managed | line (environmental) | LAB |
+| Management static routes: `/c/sys/mmgmt/route/ipv4/add <dst> <mask> <gw>` in one line (a bare `add` prompts "Enter destination IP address:"). Applies when the gateway is on the management port subnet, also with the DHCP client on. A gateway outside that subnet refuses the WHOLE apply: "Error: Nexthop network not same as management for dest D mask M gw G." + "Error: Apply not done" (34.0.12, 34.5.7). The converter therefore lists routes as manual steps. IPv6 menu `/c/sys/mmgmt/route/ipv6` exists; its one-line form is not proven. `/c/sys/mmgmt/dhcp` takes `disable|enable` (or `d|e`; `ena`/`dis` accepted); a bare `dhcp` prompts "[d/e]" | apply | MGMTRT-1, MGMTDHCP-1 |
 | One routing table per instance: identical IPs in two F5 route domains cannot share one Alteon (use per-RD split / vADCs) | apply | LIVE-17, LIVE-21 |
 
 ## Real servers and groups

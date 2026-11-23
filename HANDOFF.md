@@ -8,15 +8,22 @@
 > On a fresh clone: `git config core.hooksPath .githooks` (npm install does it too).
 
 Rules and how to work: **[AGENTS.md](AGENTS.md)**. This file is the state.
-Last updated: 2026-11-19.
+Last updated: 2026-11-23.
 
 ## Where things stand
 
 | | Version | Content |
 |---|---|---|
-| npm `@radware/f5-to-alteon` | **0.10.0** | latest release (2026-11-19) |
-| public repo `main` | 0.10.0 | snapshot from private `main` via `tools/publish-public.ps1` |
-| private `main` | 0.10.0 | the PR #1 / #2 work (HTTP API `serve`, Dockerfile, GHCR image) is merged in |
+| npm `@radware/f5-to-alteon` | **0.10.1** | latest release (2026-11-23) |
+| public repo `main` | 0.10.1 | snapshot from private `main` via `tools/publish-public.ps1` |
+| private `main` | 0.10.1 | the PR #1 / #2 work (HTTP API `serve`, Dockerfile, GHCR image) is merged in |
+
+**In 0.10.1** (field requests from the PS team, 2026-11-19 / 21): IDLEN-1
+(real / group / virt IDs kept up to 255 characters, `--max-id-len 32` for
+older Alteons), MGMTRT-1 (management routes listed in needs-manual-work.txt
+with the exact `/c/sys/mmgmt/route/ipv4/add` command - never in the config:
+an off-subnet gateway refuses the whole apply), MGMTDHCP-1 (`dhcp ena` only
+when the F5 management uses DHCP). Tests: 163. Gate evidence: Round 15.
 
 **In 0.10.0** (since 0.9.1; all with tests + DELTAS rows, found by the
 apply-level gate on field data): validate4 (stage + apply gate), LOGEXP-1,
@@ -36,7 +43,8 @@ filter pairs), pools, nodes, monitors (incl. AND/OR -> LOGEXP), persistence
 Automap, administrative partitions, route domains (segmentation on one device,
 or per-RD split), wildcard / forwarding / source-match virtuals -> filters,
 VLANs (tagged / untagged members, paste-safe PVID order), interfaces, floating
-IPs, routes, trunks/LACP, mgmt/NTP/syslog/SNMP.
+IPs, routes, trunks/LACP, mgmt/NTP/syslog/SNMP (management static routes as
+manual steps with the command).
 Not converted (diagnostics): iRules, LTM policies, GTM, ASM, DNS monitors,
 standalone SNAT objects, POST monitor bodies with quotes or line breaks, TCP
 monitors with send/expect (need a script-type check).
@@ -63,7 +71,12 @@ monitors with send/expect (need a script-type check).
    RDs). SPLIT-2 puts them aside, correctly - but this is a migration-design
    decision for that customer (local backends per instance, or an
    inter-instance path), not something to "fix" in the converter.
-6. **Legacy tool still in use.** Reports with a Python traceback
+6. **VPN drops stall the gate lanes.** On 2026-11-22 both lanes lost SSH at
+   the same moment and `apply-gate-lanes.ps1` kept waiting after SSH was
+   back. Watch lanes with a stall check (a lane "waiting for" over 30 min)
+   and restart the remaining files; a cut run that never reached apply only
+   needs `revert` on the device.
+7. **Legacy tool still in use.** Reports with a Python traceback
    (`local_runner.py`, `app/f5_mig.py`, `KeyError: 'vip'`) are about the old
    tool: reply with "use @radware/f5-to-alteon", do not fix the old code.
 
@@ -84,7 +97,7 @@ monitors with send/expect (need a script-type check).
 ## Verify the repo quickly
 
 ```bash
-cd node && npm test                       # 156 pass
+cd node && npm test                       # 163 pass
 node ../tools/scan-sensitive.js           # clean
 node bin/f5-to-alteon.js ../fixtures/sample01/bigip_base.conf ../fixtures/sample01/bigip.conf -o ../out/sample01
 ```

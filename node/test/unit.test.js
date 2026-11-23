@@ -92,7 +92,9 @@ test('BUG-5 fixed: single management default route becomes mmgmt gw', () => {
 test('non-default management routes produce a manual diagnostic', () => {
   const conf = 'sys management-route /Common/x {\n    gateway 192.168.5.1\n    network 10.0.0.0/8\n}\n';
   const res = migrate([conf]);
-  assert.ok(res.diagnostics.some(d => d.issue.includes('Management routes are not supported')));
+  // MGMTRT-1: management routes are always put aside with the exact command
+  assert.ok(res.diagnostics.some(d => d.issue.includes('Management route 10.0.0.0/8 via 192.168.5.1 NOT added') && d.issue.includes('ipv4/add 10.0.0.0 255.0.0.0 192.168.5.1')));
+  assert.ok(!res.output.includes('mmgmt/route'));
 });
 
 test('iRules on a virtual produce a manual diagnostic (not silence)', () => {
@@ -542,7 +544,7 @@ ltm virtual /Common/${longVirt} {
     pool /Common/${longPool}
 }
 `;
-  const res = migrate([conf]);
+  const res = migrate([conf], { maxIdLen: 32 });   // IDLEN-1: 32 is now the opt-in for older Alteons
   for (const m of res.output.matchAll(/^\/c\/slb\/(?:real|group|virt) ([^\s/]+)/gm)) {
     assert.ok(m[1].length <= 32, 'ID still too long: ' + m[1]);
     assert.match(m[1], /^[\w.-]+$/, 'ID has special chars the CLI rejects: ' + m[1]);

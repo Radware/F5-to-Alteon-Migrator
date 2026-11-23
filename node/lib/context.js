@@ -21,7 +21,7 @@ class Context {
     this.gws = new Map();        // id -> {addr}
     this.trunks = new Map();
     this.lacp = new Map();
-    this.mgmt = { hprompt: 'ena', mmgmt: new Map(), ntp: new Map(), syslog: new Map(), ssnmp: new Map() };
+    this.mgmt = { hprompt: 'ena', mmgmt: new Map(), routes: [], ntp: new Map(), syslog: new Map(), ssnmp: new Map() };
     this.rportByPool = new Map();
     this.longNames = new Map();
     this.counters = new Map();

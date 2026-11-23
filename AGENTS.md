@@ -144,7 +144,8 @@ quotes the original F5 stanza), `not-supported.txt` (log2).
 - Comment a fix with its ID and evidence, e.g.
   `// LIVE-22: pbind ssl is silently ignored (verified on 34.5.7)`. Comments
   state device constraints the code cannot show; no narration.
-- Names: Alteon IDs are max 32 chars, no special characters; rename
+- Names: real/group/virt IDs are max 255 chars (IDLEN-1; `--max-id-len 32` for
+  older Alteons), hc/nwclss 32, no special characters; rename
   deterministically and fix every reference (see `shortenIds`, `foldNameCollisions`).
 - Per-RD split: `splitByRouteDomain` creates sub-contexts; anything that
   references across them must be resolved there (SPLIT-2), never left dangling.

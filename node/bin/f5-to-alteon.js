@@ -33,6 +33,10 @@ Options:
       --bulk          Force bulk mode on a folder
       --single        Force single-device mode on a folder
       --rd-mode <m>   Route-domain strategy: auto (default) | segment | split
+      --max-id-len <n>
+                      Longest real/group/virt ID kept as is (default 255, proven
+                      on Alteon 34.0.12 and 34.5.7); longer F5 names are renamed.
+                      Use 32 for older Alteon releases.
       --stdout        Print the Alteon config to stdout (single input only)
   -h, --help          Show this help`);
 }
@@ -42,18 +46,20 @@ if (!args.length || args.includes('-h') || args.includes('--help')) { usage(); p
 if (args[0] === 'serve') return require('../lib/server').serve();
 
 const files = [];
-let outDir = null, name = null, toStdout = false, rdMode = 'auto', bulkFlag = null;
+let outDir = null, name = null, toStdout = false, rdMode = 'auto', bulkFlag = null, maxIdLen = 255;
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === '-o' || a === '--out') outDir = args[++i];
   else if (a === '--name') name = args[++i];
   else if (a === '--rd-mode') rdMode = args[++i];
+  else if (a === '--max-id-len') maxIdLen = Number(args[++i]);
   else if (a === '--stdout') toStdout = true;
   else if (a === '--bulk') bulkFlag = true;
   else if (a === '--single') bulkFlag = false;
   else files.push(a);
 }
 if (!['auto', 'segment', 'split'].includes(rdMode)) { console.error('error: --rd-mode must be auto, segment, or split'); process.exit(1); }
+if (!Number.isInteger(maxIdLen) || maxIdLen < 8 || maxIdLen > 255) { console.error('error: --max-id-len must be a whole number from 8 to 255'); process.exit(1); }
 if (!files.length) { console.error('error: no input files'); process.exit(1); }
 
 const ARCHIVE_RE = /\.(qkview|ucs|tar|tgz|tar\.gz)$/i;
@@ -128,7 +134,7 @@ async function convertOne(inputs, dir, label) {
     for (const p of resolved.partitions || []) if (!partitions.includes(p)) partitions.push(p);
     for (const n of resolved.notes || []) console.log('  NOTE: ' + n);
   }
-  const res = migrate(texts, { rdMode, partitions });
+  const res = migrate(texts, { rdMode, partitions, maxIdLen });
   if (res.objectCount === 0) throw new Error('no F5 configuration objects found');
   return writeResult(res, dir, label);
 }
@@ -162,7 +168,7 @@ async function convertOne(inputs, dir, label) {
       for (const s of resolved) texts.push({ text: s.text, partition: s.partition || null });
       for (const p of resolved.partitions || []) if (!partitions.includes(p)) partitions.push(p);
     }
-    const res = migrate(texts, { rdMode, partitions });
+    const res = migrate(texts, { rdMode, partitions, maxIdLen });
     if (res.objectCount === 0) { console.error('error: no F5 configuration objects found in the input.'); process.exit(1); }
     process.stdout.write(res.output);
     process.exit(0);
